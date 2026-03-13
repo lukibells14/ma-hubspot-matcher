@@ -1,0 +1,348 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Playfair+Display:ital,wght@0,500;0,700;0,900;1,500;1,700&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400;1,600&display=swap");
+
+:root {
+  --background: #ffffff;
+  --foreground: #000000;
+  --muted: #f5f5f5;
+  --muted-foreground: #525252;
+  --accent: #000000;
+  --accent-foreground: #ffffff;
+  --border: #000000;
+  --border-light: #e5e5e5;
+  --ring: #000000;
+
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-body: "Source Serif 4", Georgia, serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  --line-hairline: 1px solid var(--border-light);
+  --line-thin: 1px solid var(--border);
+  --line-medium: 2px solid var(--border);
+  --line-thick: 4px solid var(--border);
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.625;
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 1px,
+    #000 1px,
+    #000 2px
+  );
+  background-size: 100% 4px;
+  opacity: 0.015;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.02;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  margin: 0;
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+[role="button"],
+a,
+input,
+select,
+textarea {
+  min-height: 44px;
+}
+
+.ds-shell {
+  max-width: 1152px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-12);
+}
+
+.ds-hero {
+  padding: var(--space-6) 0 var(--space-8);
+}
+
+.ds-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.ds-display {
+  font-size: clamp(3.5rem, 9vw, 10rem);
+  margin-top: var(--space-3);
+}
+
+.ds-lead {
+  font-size: 1.25rem;
+  max-width: 70ch;
+}
+
+.ds-rule {
+  border-top: var(--line-thick);
+  margin: var(--space-8) 0;
+}
+
+.ds-rule-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.ds-rule-hero::before {
+  content: "";
+  flex: 1;
+  border-top: var(--line-thick);
+}
+
+.ds-rule-hero::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border: var(--line-thin);
+}
+
+.ds-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.ds-card {
+  border: var(--line-thin);
+  background: var(--background);
+  padding: var(--space-4);
+}
+
+.ds-card-muted {
+  border: var(--line-hairline);
+  background: var(--muted);
+  padding: var(--space-3) var(--space-4);
+}
+
+.ds-card-invert {
+  background: var(--foreground);
+  color: var(--background);
+  border: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.ds-card-invert::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 1px,
+    #fff 1px,
+    #fff 2px
+  );
+  background-size: 4px 100%;
+  opacity: 0.03;
+}
+
+.ds-card-invert > * {
+  position: relative;
+}
+
+.ds-card-title {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  margin-bottom: var(--space-2);
+}
+
+.ds-muted {
+  color: var(--muted-foreground);
+}
+
+.ds-meta {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.ds-control-label {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-weight: 600;
+}
+
+.ds-input,
+.ds-select,
+.ds-textarea,
+select.ds-input {
+  width: 100%;
+  border: 2px solid var(--foreground);
+  background: var(--background);
+  padding: 0.55rem 0.65rem;
+}
+
+.ds-input::placeholder {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.ds-input:focus,
+select.ds-input:focus,
+.ds-textarea:focus {
+  border-width: 3px;
+  outline: none;
+}
+
+.ds-btn {
+  border: 2px solid var(--foreground);
+  background: transparent;
+  color: var(--foreground);
+  padding: 0.65rem 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: none;
+}
+
+.ds-btn:hover {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.ds-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-btn-primary {
+  background: var(--foreground);
+  color: var(--background);
+  border-color: var(--foreground);
+}
+
+.ds-btn-primary:hover {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.ds-btn-ghost {
+  border: none;
+  padding-left: 0;
+  padding-right: 0;
+  text-decoration: none;
+}
+
+.ds-btn-ghost:hover {
+  background: transparent;
+  color: var(--foreground);
+  text-decoration: underline;
+}
+
+.ds-btn:focus-visible,
+.ds-btn-ghost:focus-visible,
+.ds-input:focus-visible,
+select.ds-input:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.ds-pill {
+  border: var(--line-thin);
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.ds-table-wrap {
+  border: var(--line-thin);
+  overflow: auto;
+}
+
+.ds-linklike {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.ds-linklike:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 980px) {
+  .ds-grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .ds-shell {
+    padding: var(--space-6) var(--space-4) var(--space-8);
+  }
+
+  .ds-display {
+    font-size: clamp(3rem, 15vw, 5rem);
+  }
+}
