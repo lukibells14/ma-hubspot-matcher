@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CandidateDisplay, RowObject } from "../types";
+import type { CandidateDisplay, RowObject, SelectionRow } from "../types";
 import { Input } from "./ui";
 
 export function MatchViewer({
@@ -10,6 +10,7 @@ export function MatchViewer({
   onSelectHub,
   onSelectNoMatch,
   showFoundBy = true,
+  previousSelection,
 }: {
   maRow: RowObject;
   maFields: string[];
@@ -18,6 +19,7 @@ export function MatchViewer({
   onSelectHub: (c: CandidateDisplay) => void;
   onSelectNoMatch: () => void;
   showFoundBy?: boolean;
+  previousSelection?: SelectionRow;
 }) {
   const [active, setActive] = useState(0);
   const [query, setQuery] = useState("");
@@ -29,8 +31,20 @@ export function MatchViewer({
       foundBy: [] as any[],
       hubRow: { __label: "No Match" },
     } as CandidateDisplay;
+
+    if (previousSelection?.selectionType === "hubspot" && previousSelection.hubRow) {
+      const prevItem = {
+        hubIndex: previousSelection.hubIndex!,
+        score: previousSelection.score ?? 0,
+        foundBy: (previousSelection.foundBy ?? []) as any[],
+        hubRow: previousSelection.hubRow,
+        __isPrevious: true,
+      } as CandidateDisplay & { __isPrevious: boolean };
+      return [noMatch, prevItem, ...candidates];
+    }
+
     return [noMatch, ...candidates];
-  }, [candidates]);
+  }, [candidates, previousSelection]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -41,6 +55,7 @@ export function MatchViewer({
 
     return items.filter((c, idx) => {
       if (idx === 0) return true;
+      if ((c as any).__isPrevious) return true;
       const title = String(c.hubRow?.[nameField] ?? "(blank)").toLowerCase();
       return terms.every((t) => title.includes(t));
     });
@@ -72,8 +87,9 @@ export function MatchViewer({
     return () => window.removeEventListener("keydown", handler);
   }, [active, filteredItems, onSelectHub, onSelectNoMatch]);
 
-  const totalMatches = items.length - 1;
-  const shownMatches = Math.max(filteredItems.length - 1, 0);
+  const prevOffset = items.some((c) => (c as any).__isPrevious) ? 1 : 0;
+  const totalMatches = items.length - 1 - prevOffset;
+  const shownMatches = Math.max(filteredItems.filter((c) => !(c as any).__isPrevious).length - 1, 0);
 
   const nameField = hubFields[0];
   const extraFields = hubFields.slice(1);
@@ -179,8 +195,8 @@ export function MatchViewer({
                     padding: "10px 8px",
                     borderBottom: "var(--line-hairline)",
                     cursor: "pointer",
-                    background: isActive ? "var(--foreground)" : "var(--background)",
-                    color: isActive ? "var(--background)" : "var(--foreground)",
+                    background: isActive ? "var(--foreground)" : (c as any).__isPrevious ? "#f5f5f5" : !isNoMatch && c.score === 100 ? "#0d662c" : !isNoMatch && c.score >= 86 ? "#a8f7c3" : "var(--background)",
+                    color: isActive ? "var(--background)" : !isNoMatch && c.score === 100 && !(c as any).__isPrevious ? "#ffffff" : "var(--foreground)",
                     outline: isActive ? "2px solid var(--foreground)" : "none",
                     outlineOffset: -2,
                     alignItems: "center",
@@ -195,6 +211,8 @@ export function MatchViewer({
 
                     {isNoMatch ? (
                       <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>Select if none of the candidates match.</div>
+                    ) : (c as any).__isPrevious ? (
+                      <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", opacity: isActive ? 1 : 0.7, marginTop: 2 }}>↩ CURRENT MATCH</div>
                     ) : (
                       showFoundBy && (
                         <div

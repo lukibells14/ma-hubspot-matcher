@@ -12,13 +12,15 @@ import {
 
 type InitMsg = { type: "INIT"; hubRows: RowObject[]; mapping: ColumnMapping };
 type StartMsg = { type: "START"; maRows: RowObject[] };
-type GetCandidatesMsg = { type: "GET_CANDIDATES"; maIndex: number };
-type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg;
+type GetCandidatesMsg = { type: "GET_CANDIDATES"; maIndex: number; maxCandidates?: number };
+type PrescreenMsg = { type: "PRESCREEN" };
+type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg | PrescreenMsg;
 
 type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: Candidate[] }
+  | { type: "PRESCREEN_DONE"; hundredPct: number[]; rest: number[] }
   | { type: "ERROR"; message: string };
 
 let HUB: RowObject[] = [];
@@ -133,7 +135,7 @@ function addCandidate(
   }
 }
 
-function getCandidatesFor(maRow: RowObject): Candidate[] {
+function getCandidatesFor(maRow: RowObject, maxCandidates = 100): Candidate[] {
   if (!mapping) return [];
 
   const maName = String(maRow?.[mapping.maName] ?? "");
@@ -203,6 +205,9 @@ if (maAcr) {
     const sim = diceSimilarity(maCore, hubCore[idx] ?? "");
     score = Math.round(sim * 90);
 
+    // exact core name → 100
+    if (maCore && hubCore[idx] && maCore === hubCore[idx]) score = 100;
+
     // boost if domain exact
     if (maDom && hubDomain[idx] && maDom === hubDomain[idx]) score = 100;
 
@@ -240,7 +245,7 @@ if (maAcr) {
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 100);
+  return scored.slice(0, maxCandidates);
 }
 
 self.onmessage = (e: MessageEvent<WorkerMsg>) => {
@@ -263,8 +268,34 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
 
     if (msg.type === "GET_CANDIDATES") {
       const row = MA[msg.maIndex];
-      const candidates = row ? getCandidatesFor(row) : [];
+      const candidates = row ? getCandidatesFor(row, msg.maxCandidates) : [];
       (self as any).postMessage({ type: "CANDIDATES", maIndex: msg.maIndex, candidates } satisfies WorkerOut);
+      return;
+    }
+
+    if (msg.type === "PRESCREEN") {
+      if (!mapping) return;
+      const hundredPct: number[] = [];
+      const rest: number[] = [];
+
+      for (let i = 0; i < MA.length; i++) {
+        const row = MA[i];
+        if (!row) { rest.push(i); continue; }
+
+        const maDom = mapping.maDomain ? cleanDomain(row[mapping.maDomain]) : "";
+        const maCore = coreName(String(row[mapping.maName] ?? ""));
+
+        const hasDomainHit = !!maDom && domainIndex.has(maDom);
+        const hasCoreHit = !!maCore && coreNameIndex.has(maCore);
+
+        // anything with a 100% candidate goes first regardless of domain mapping
+        const is100 = hasDomainHit || hasCoreHit;
+
+        if (is100) hundredPct.push(i);
+        else rest.push(i);
+      }
+
+      (self as any).postMessage({ type: "PRESCREEN_DONE", hundredPct, rest } satisfies WorkerOut);
       return;
     }
 

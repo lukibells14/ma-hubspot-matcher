@@ -18,6 +18,7 @@ type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: { hubIndex: number; score: number; foundBy: any[] }[] }
+  | { type: "PRESCREEN_DONE"; hundredPct: number[]; rest: number[] }
   | { type: "ERROR"; message: string };
 
 export default function App() {
@@ -43,11 +44,17 @@ export default function App() {
   const [maFilename, setMaFilename] = useState<string>("");
   const [hubFilename, setHubFilename] = useState<string>("");
 
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [matchingQueue, setMatchingQueue] = useState<number[]>([]);
+  const [currentQueuePos, setCurrentQueuePos] = useState(0);
+  const [maxCandidates, setMaxCandidates] = useState(100);
   const [candidates, setCandidates] = useState<CandidateDisplay[]>([]);
   const [selections, setSelections] = useState<SelectionRow[]>([]);
 
   const workerRef = useRef<Worker | null>(null);
+  const maxCandidatesRef = useRef(maxCandidates);
+  useEffect(() => { maxCandidatesRef.current = maxCandidates; }, [maxCandidates]);
+
+  const currentIndex = matchingQueue[currentQueuePos] ?? 0;
 
   useEffect(() => {
     const w = new Worker(new URL("./workers/match.worker.ts", import.meta.url), { type: "module" });
@@ -71,7 +78,13 @@ export default function App() {
           })) as CandidateDisplay[];
 
         setCandidates(mapped);
-        setStatus(`Matching: ${(msg.maIndex + 1).toLocaleString()}/${maRows.length.toLocaleString()}`);
+      } else if (msg.type === "PRESCREEN_DONE") {
+        const queue = [...msg.hundredPct, ...msg.rest];
+        setMatchingQueue(queue);
+        setCurrentQueuePos(0);
+        if (queue.length > 0) {
+          workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: queue[0], maxCandidates: maxCandidatesRef.current });
+        }
       } else if (msg.type === "ERROR") {
         setStatus(`Error: ${msg.message}`);
       }
@@ -82,6 +95,12 @@ export default function App() {
       workerRef.current = null;
     };
   }, [hubRows, maRows.length]);
+
+  useEffect(() => {
+    if (stage === "matching" && matchingQueue.length > 0) {
+      setStatus(`Matching: ${(currentQueuePos + 1).toLocaleString()}/${matchingQueue.length.toLocaleString()}`);
+    }
+  }, [currentQueuePos, matchingQueue.length, stage]);
 
   useEffect(() => {
     (async () => {
@@ -122,30 +141,91 @@ export default function App() {
 
   const startMatching = () => {
     setSelections([]);
-    setCurrentIndex(0);
+    setCurrentQueuePos(0);
+    setMatchingQueue([]);
     setStage("matching");
+    setStatus("Indexing HubSpot...");
 
     workerRef.current?.postMessage({ type: "INIT", hubRows, mapping });
     workerRef.current?.postMessage({ type: "START", maRows });
-    workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: 0 });
+    workerRef.current?.postMessage({ type: "PRESCREEN" });
   };
 
   const applySelection = (sel: SelectionRow) => {
-    setSelections((prev) => [...prev, sel]);
+    setSelections((prev) => {
+      const existingIdx = prev.findIndex((s) => s.maIndex === sel.maIndex);
+      if (existingIdx >= 0) {
+        const next = [...prev];
+        next[existingIdx] = sel;
+        return next;
+      }
+      return [...prev, sel];
+    });
 
-    const next = currentIndex + 1;
-    if (next >= maRows.length) {
+    const nextQueuePos = currentQueuePos + 1;
+    if (nextQueuePos >= matchingQueue.length) {
       setStage("done");
       setCandidates([]);
       setStatus("Finished matching.");
       return;
     }
 
-    setCurrentIndex(next);
-    workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: next });
+    setCurrentQueuePos(nextQueuePos);
+    workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: matchingQueue[nextQueuePos], maxCandidates });
   };
 
+  const goBack = () => {
+    if (stage === "done") {
+      const lastQueuePos = matchingQueue.length - 1;
+      if (lastQueuePos < 0) return;
+      setCurrentQueuePos(lastQueuePos);
+      setStage("matching");
+      setCandidates([]);
+      workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: matchingQueue[lastQueuePos], maxCandidates });
+      return;
+    }
+    if (currentQueuePos === 0) return;
+    const prevQueuePos = currentQueuePos - 1;
+    setCurrentQueuePos(prevQueuePos);
+    setCandidates([]);
+    workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: matchingQueue[prevQueuePos], maxCandidates });
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft") return;
+      if (stage !== "matching" && stage !== "done") return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) return;
+
+      e.preventDefault();
+
+      if (stage === "done") {
+        const lastQueuePos = matchingQueue.length - 1;
+        if (lastQueuePos < 0) return;
+        setCurrentQueuePos(lastQueuePos);
+        setStage("matching");
+        setCandidates([]);
+        workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: matchingQueue[lastQueuePos], maxCandidates });
+        return;
+      }
+
+      if (currentQueuePos === 0) return;
+      const prevQueuePos = currentQueuePos - 1;
+      setCurrentQueuePos(prevQueuePos);
+      setCandidates([]);
+      workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: matchingQueue[prevQueuePos], maxCandidates });
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [stage, currentQueuePos, matchingQueue, maxCandidates]);
+
   const currentMaRow = maRows[currentIndex];
+  const previousSelection = selections.find((s) => s.maIndex === currentIndex);
 
   return (
     <main className="ds-shell">
@@ -324,7 +404,7 @@ export default function App() {
         <>
           <div className="ds-rule" />
           <section>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.8rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.8rem", alignItems: "center" }}>
               <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap" }}>
                 <FieldSelectorDropdown
                   label="M&A fields (left)"
@@ -341,7 +421,21 @@ export default function App() {
                   onToggleFoundBy={(next) => setFields((f) => ({ ...f, showHubFoundBy: next }))}
                 />
               </div>
-              <div className="ds-meta ds-muted">Use UP/DOWN then Enter. "No Match" appears first.</div>
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                  <span className="ds-meta ds-muted">Max candidates</span>
+                  <input
+                    type="number"
+                    value={maxCandidates}
+                    min={10}
+                    max={1000}
+                    onChange={(e) => setMaxCandidates(Math.max(10, Math.min(1000, parseInt(e.target.value) || 100)))}
+                    style={{ width: 70, border: "2px solid var(--foreground)", padding: "0.2rem 0.4rem", background: "var(--background)", fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}
+                  />
+                </div>
+                <div className="ds-meta ds-muted">UP/DOWN + Enter. ← Go back.</div>
+                <Button onClick={goBack} disabled={currentQueuePos === 0}>← Go Back</Button>
+              </div>
             </div>
 
             <MatchViewer
@@ -350,6 +444,7 @@ export default function App() {
               hubFields={hubDisplayFields}
               showFoundBy={fields.showHubFoundBy ?? true}
               candidates={candidates}
+              previousSelection={previousSelection}
               onSelectHub={(c) =>
                 applySelection({
                   maIndex: currentIndex,
@@ -380,10 +475,14 @@ export default function App() {
 
       <div className="ds-rule" />
       <section className="ds-card ds-card-invert" style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-        <Button disabled={!selections.length} onClick={() => exportSelectionsToXlsx(selections, maCols, hubCols)} variant="primary">
-          9) Export to Excel
-        </Button>
-
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+          <Button disabled={!selections.length} onClick={() => exportSelectionsToXlsx(selections, maCols, hubCols)} variant="primary">
+            9) Export to Excel
+          </Button>
+          <Button onClick={goBack} disabled={matchingQueue.length === 0}>
+            ← Go Back
+          </Button>
+        </div>
         {stage === "done" && <div className="ds-card-title" style={{ fontSize: "1.6rem", marginBottom: 0 }}>Finished. Export your table.</div>}
       </section>
     </main>

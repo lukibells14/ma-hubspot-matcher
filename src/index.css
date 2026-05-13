@@ -108,7 +108,7 @@ textarea {
 }
 
 .ds-shell {
-  max-width: 1152px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-12);
 }
