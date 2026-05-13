@@ -3,9 +3,10 @@ import type { RowObject, ColumnMapping, DisplayFieldSelection, CandidateDisplay,
 
 import { parseCsvFile } from "./utils/csv";
 import { loadHubspotCache, saveHubspotCache, clearHubspotCache } from "./utils/storage";
-import { exportSelectionsToXlsx } from "./utils/export";
+import { exportSelectionsToXlsx, exportRemainingToCsv } from "./utils/export";
 
 import { FileUploadCard } from "./components/FileUploadCard";
+import { ExportModal } from "./components/ExportModal";
 import { SummaryModal } from "./components/SummaryModal";
 import { ColumnMapper } from "./components/ColumnMapper";
 import { ProgressHeader } from "./components/ProgressHeader";
@@ -49,6 +50,8 @@ export default function App() {
   const [maxCandidates, setMaxCandidates] = useState(100);
   const [candidates, setCandidates] = useState<CandidateDisplay[]>([]);
   const [selections, setSelections] = useState<SelectionRow[]>([]);
+
+  const [exportModalOpen, setExportModalOpen] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const maxCandidatesRef = useRef(maxCandidates);
@@ -227,8 +230,27 @@ export default function App() {
   const currentMaRow = maRows[currentIndex];
   const previousSelection = selections.find((s) => s.maIndex === currentIndex);
 
+  const handleExport = (xlsxName: string, csvName: string) => {
+    exportSelectionsToXlsx(selections, maCols, hubCols, `${xlsxName}.xlsx`);
+
+    if (stage !== "done") {
+      const reviewedIndices = new Set(selections.map((s) => s.maIndex));
+      const remainingRows = maRows.filter((_, i) => !reviewedIndices.has(i));
+      exportRemainingToCsv(remainingRows, maCols, `${csvName}.csv`);
+    }
+
+    setExportModalOpen(false);
+  };
+
   return (
     <main className="ds-shell">
+      <ExportModal
+        open={exportModalOpen}
+        isFinished={stage === "done"}
+        onClose={() => setExportModalOpen(false)}
+        onExport={handleExport}
+      />
+
       <SummaryModal
         open={modalOpen}
         title={modalTitle}
@@ -476,7 +498,7 @@ export default function App() {
       <div className="ds-rule" />
       <section className="ds-card ds-card-invert" style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-          <Button disabled={!selections.length} onClick={() => exportSelectionsToXlsx(selections, maCols, hubCols)} variant="primary">
+          <Button disabled={!selections.length} onClick={() => setExportModalOpen(true)} variant="primary">
             9) Export to Excel
           </Button>
           <Button onClick={goBack} disabled={matchingQueue.length === 0}>
