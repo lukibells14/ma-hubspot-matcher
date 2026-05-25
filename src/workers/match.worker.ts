@@ -1,4 +1,4 @@
-import type { ColumnMapping, RowObject, Candidate, FoundBy } from "../types";
+import type { ColumnMapping, RowObject, Candidate, FoundBy, BatchMatchResult } from "../types";
 import {
   cleanDomain,
   coreName,
@@ -9,18 +9,21 @@ import {
   looksLikeAcronym,
   acronymPunctKey,
 } from "../utils/normalize";
+import { runBatchMatch } from "../utils/batchMatch";
 
 type InitMsg = { type: "INIT"; hubRows: RowObject[]; mapping: ColumnMapping };
 type StartMsg = { type: "START"; maRows: RowObject[] };
 type GetCandidatesMsg = { type: "GET_CANDIDATES"; maIndex: number; maxCandidates?: number };
 type PrescreenMsg = { type: "PRESCREEN" };
-type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg | PrescreenMsg;
+type BatchMatchMsg = { type: "BATCH_MATCH" };
+type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg | PrescreenMsg | BatchMatchMsg;
 
 type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: Candidate[] }
   | { type: "PRESCREEN_DONE"; hundredPct: number[]; rest: number[] }
+  | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "ERROR"; message: string };
 
 let HUB: RowObject[] = [];
@@ -270,6 +273,13 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
       const row = MA[msg.maIndex];
       const candidates = row ? getCandidatesFor(row, msg.maxCandidates) : [];
       (self as any).postMessage({ type: "CANDIDATES", maIndex: msg.maIndex, candidates } satisfies WorkerOut);
+      return;
+    }
+
+    if (msg.type === "BATCH_MATCH") {
+      if (!mapping) return;
+      const result = runBatchMatch(MA, HUB, mapping);
+      (self as any).postMessage({ type: "BATCH_MATCH_DONE", result } satisfies WorkerOut);
       return;
     }
 

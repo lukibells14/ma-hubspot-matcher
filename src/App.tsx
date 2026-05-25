@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RowObject, ColumnMapping, DisplayFieldSelection, CandidateDisplay, SelectionRow } from "./types";
+import type { RowObject, ColumnMapping, DisplayFieldSelection, CandidateDisplay, SelectionRow, BatchMatchItem, BatchMatchResult, CustomColumn } from "./types";
 
 import { parseCsvFile } from "./utils/csv";
 import { loadHubspotCache, saveHubspotCache, clearHubspotCache } from "./utils/storage";
 import { exportSelectionsToXlsx, exportRemainingToCsv } from "./utils/export";
+import { applyCustomColumns } from "./utils/customColumns";
 
 import { FileUploadCard } from "./components/FileUploadCard";
 import { ExportModal } from "./components/ExportModal";
 import { SummaryModal } from "./components/SummaryModal";
+import { BatchReviewModal } from "./components/BatchReviewModal";
+import { CustomColumnBuilder } from "./components/CustomColumnBuilder";
 import { ColumnMapper } from "./components/ColumnMapper";
 import { ProgressHeader } from "./components/ProgressHeader";
 import { FieldSelectorDropdown } from "./components/FieldSelectorDropdown";
@@ -20,6 +23,7 @@ type WorkerOut =
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: { hubIndex: number; score: number; foundBy: any[] }[] }
   | { type: "PRESCREEN_DONE"; hundredPct: number[]; rest: number[] }
+  | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "ERROR"; message: string };
 
 export default function App() {
@@ -53,6 +57,31 @@ export default function App() {
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
 
+  const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  const [customColBuilderOpen, setCustomColBuilderOpen] = useState(false);
+  const customColumnsRef = useRef<CustomColumn[]>([]);
+  useEffect(() => {
+    customColumnsRef.current = customColumns;
+    // Re-augment currently displayed candidates so edits reflect immediately
+    setCandidates((prev) => {
+      if (prev.length === 0) return prev;
+      return prev.map((c) => {
+        const baseRow = hubRows[c.hubIndex] ?? c.hubRow;
+        const hubRow = customColumns.length > 0
+          ? { ...baseRow, ...applyCustomColumns(baseRow, customColumns) }
+          : baseRow;
+        return { ...c, hubRow };
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customColumns]);
+
+  const [enableBatchMode, setEnableBatchMode] = useState(false);
+  const [batchReviewOpen, setBatchReviewOpen] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchMatchResult | null>(null);
+  const [batchAutoCount, setBatchAutoCount] = useState(0);
+  const batchConfirmedSetRef = useRef<Set<number>>(new Set());
+
   const workerRef = useRef<Worker | null>(null);
   const maxCandidatesRef = useRef(maxCandidates);
   useEffect(() => { maxCandidatesRef.current = maxCandidates; }, [maxCandidates]);
@@ -71,22 +100,32 @@ export default function App() {
       } else if (msg.type === "READY") {
         setStatus(`Ready. HubSpot: ${msg.hubCount.toLocaleString()} rows | M&A: ${msg.maCount.toLocaleString()} rows`);
       } else if (msg.type === "CANDIDATES") {
+        const cols = customColumnsRef.current;
         const mapped = msg.candidates
           .filter((c) => c.hubIndex >= 0)
-          .map((c) => ({
-            hubIndex: c.hubIndex,
-            score: c.score,
-            foundBy: c.foundBy as any[],
-            hubRow: hubRows[c.hubIndex],
-          })) as CandidateDisplay[];
+          .map((c) => {
+            const baseRow = hubRows[c.hubIndex];
+            const hubRow = cols.length > 0
+              ? { ...baseRow, ...applyCustomColumns(baseRow, cols) }
+              : baseRow;
+            return { hubIndex: c.hubIndex, score: c.score, foundBy: c.foundBy as any[], hubRow };
+          }) as CandidateDisplay[];
 
         setCandidates(mapped);
+      } else if (msg.type === "BATCH_MATCH_DONE") {
+        setBatchResult(msg.result);
+        setBatchReviewOpen(true);
+        setStatus(`Auto-match scan complete. Found ${msg.result.matched.length.toLocaleString()} exact matches.`);
       } else if (msg.type === "PRESCREEN_DONE") {
-        const queue = [...msg.hundredPct, ...msg.rest];
+        const confirmed = batchConfirmedSetRef.current;
+        const queue = [...msg.hundredPct, ...msg.rest].filter((i) => !confirmed.has(i));
         setMatchingQueue(queue);
         setCurrentQueuePos(0);
         if (queue.length > 0) {
           workerRef.current?.postMessage({ type: "GET_CANDIDATES", maIndex: queue[0], maxCandidates: maxCandidatesRef.current });
+        } else {
+          setStage("done");
+          setStatus("Finished matching.");
         }
       } else if (msg.type === "ERROR") {
         setStatus(`Error: ${msg.message}`);
@@ -101,9 +140,10 @@ export default function App() {
 
   useEffect(() => {
     if (stage === "matching" && matchingQueue.length > 0) {
-      setStatus(`Matching: ${(currentQueuePos + 1).toLocaleString()}/${matchingQueue.length.toLocaleString()}`);
+      const autoNote = batchAutoCount > 0 ? ` · ${batchAutoCount.toLocaleString()} auto-matched` : "";
+      setStatus(`Manual review: ${(currentQueuePos + 1).toLocaleString()}/${matchingQueue.length.toLocaleString()}${autoNote}`);
     }
-  }, [currentQueuePos, matchingQueue.length, stage]);
+  }, [currentQueuePos, matchingQueue.length, stage, batchAutoCount]);
 
   useEffect(() => {
     (async () => {
@@ -139,6 +179,11 @@ export default function App() {
     return base;
   }, [mapping.hubName, mapping.hubDomain, mapping.hubUniqueCode]);
 
+  const hubColsWithCustom = useMemo(
+    () => [...hubCols, ...customColumns.filter((c) => c.name).map((c) => c.name)],
+    [hubCols, customColumns],
+  );
+
   const maDisplayFields = fields.maFields.length ? fields.maFields : defaultMaFields;
   const hubDisplayFields = fields.hubFields.length ? fields.hubFields : defaultHubFields;
 
@@ -146,12 +191,51 @@ export default function App() {
     setSelections([]);
     setCurrentQueuePos(0);
     setMatchingQueue([]);
+    setBatchAutoCount(0);
+    batchConfirmedSetRef.current = new Set();
     setStage("matching");
     setStatus("Indexing HubSpot...");
 
     workerRef.current?.postMessage({ type: "INIT", hubRows, mapping });
     workerRef.current?.postMessage({ type: "START", maRows });
+
+    if (enableBatchMode) {
+      setStatus("Indexing HubSpot... then running auto-match scan.");
+      workerRef.current?.postMessage({ type: "BATCH_MATCH" });
+    } else {
+      workerRef.current?.postMessage({ type: "PRESCREEN" });
+    }
+  };
+
+  const handleBatchConfirm = (confirmedItems: BatchMatchItem[]) => {
+    batchConfirmedSetRef.current = new Set(confirmedItems.map((i) => i.maIndex));
+    setBatchAutoCount(confirmedItems.length);
+
+    const autoSelections: SelectionRow[] = confirmedItems.map((item) => ({
+      maIndex: item.maIndex,
+      maRow: item.maRow,
+      selectionType: "hubspot",
+      hubIndex: item.hubIndex,
+      hubRow: item.hubRow,
+      score: 100,
+      foundBy: ["batch_exact"],
+    }));
+
+    setSelections(autoSelections);
+    setBatchReviewOpen(false);
+    setBatchResult(null);
+    setStatus("Running prescreen for manual review queue...");
     workerRef.current?.postMessage({ type: "PRESCREEN" });
+  };
+
+  const handleBatchCancel = () => {
+    setBatchReviewOpen(false);
+    setBatchResult(null);
+    setSelections([]);
+    setMatchingQueue([]);
+    batchConfirmedSetRef.current = new Set();
+    setStage("ready");
+    setStatus("Cancelled auto-match. Adjust settings and try again.");
   };
 
   const applySelection = (sel: SelectionRow) => {
@@ -231,7 +315,7 @@ export default function App() {
   const previousSelection = selections.find((s) => s.maIndex === currentIndex);
 
   const handleExport = (xlsxName: string, csvName: string) => {
-    exportSelectionsToXlsx(selections, maCols, hubCols, `${xlsxName}.xlsx`);
+    exportSelectionsToXlsx(selections, maCols, hubCols, `${xlsxName}.xlsx`, customColumns);
 
     if (stage !== "done") {
       const reviewedIndices = new Set(selections.map((s) => s.maIndex));
@@ -249,6 +333,27 @@ export default function App() {
         isFinished={stage === "done"}
         onClose={() => setExportModalOpen(false)}
         onExport={handleExport}
+      />
+
+      <CustomColumnBuilder
+        open={customColBuilderOpen}
+        hubCols={hubCols}
+        hubRows={hubRows}
+        columns={customColumns}
+        onChange={setCustomColumns}
+        onClose={() => setCustomColBuilderOpen(false)}
+      />
+
+      <BatchReviewModal
+        open={batchReviewOpen}
+        result={batchResult}
+        maCols={maCols}
+        hubCols={hubCols}
+        defaultMaCols={defaultMaFields}
+        defaultHubCols={defaultHubFields}
+        customColumns={customColumns}
+        onConfirm={handleBatchConfirm}
+        onCancel={handleBatchCancel}
       />
 
       <SummaryModal
@@ -387,8 +492,64 @@ export default function App() {
         </>
       )}
 
+      {hubCols.length > 0 && (
+        <>
+          <div className="ds-rule" />
+          <section>
+            <div className="ds-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                  <div className="ds-card-title" style={{ fontSize: "1.1rem", marginBottom: 0 }}>Custom Columns</div>
+                  <span className="ds-pill" style={{ fontSize: "0.65rem" }}>OPTIONAL</span>
+                  {customColumns.length > 0 && (
+                    <span className="ds-pill" style={{ fontSize: "0.65rem", background: "var(--foreground)", color: "var(--background)" }}>
+                      {customColumns.length} defined
+                    </span>
+                  )}
+                </div>
+                <p className="ds-meta ds-muted" style={{ margin: 0 }}>
+                  Build computed columns from HubSpot data using IF/ELSE rules. Included in your Excel export.
+                  {customColumns.length > 0 && <> Columns: {customColumns.map((c) => c.name || "Unnamed").join(", ")}.</>}
+                </p>
+              </div>
+              <Button onClick={() => setCustomColBuilderOpen(true)}>
+                {customColumns.length > 0 ? "Edit Custom Columns" : "+ Add Custom Columns"}
+              </Button>
+            </div>
+          </section>
+        </>
+      )}
+
       {stage === "ready" && (
         <>
+          <div className="ds-rule" />
+          <section>
+            <div className="ds-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 260 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                  <div className="ds-card-title" style={{ fontSize: "1.1rem", marginBottom: 0 }}>Batch Options</div>
+                  <span className="ds-pill" style={{ fontSize: "0.65rem" }}>OPTIONAL</span>
+                </div>
+                <label style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", cursor: "pointer", marginTop: "0.5rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={enableBatchMode}
+                    onChange={(e) => setEnableBatchMode(e.target.checked)}
+                    style={{ marginTop: "0.15rem", flexShrink: 0 }}
+                  />
+                  <div>
+                    <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto-match exact names before manual review</span>
+                    <p className="ds-meta ds-muted" style={{ marginTop: "0.2rem", marginBottom: 0 }}>
+                      Automatically confirms 1-to-1 exact name matches (e.g. "Acme Corp" = "Acme Corporation") and
+                      lets you review them in a preview before starting manual review. Ambiguous (2+ matches) and
+                      unmatched records always proceed to manual review.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </section>
+
           <div className="ds-rule" />
           <section style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
             <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap" }}>
@@ -400,7 +561,7 @@ export default function App() {
               />
               <FieldSelectorDropdown
                 label="HubSpot fields to display"
-                allFields={hubCols}
+                allFields={hubColsWithCustom}
                 selected={hubDisplayFields}
                 onChange={(next) => setFields((f) => ({ ...f, hubFields: next }))}
               />
@@ -436,7 +597,7 @@ export default function App() {
                 />
                 <FieldSelectorDropdown
                   label="HubSpot fields (right)"
-                  allFields={hubCols}
+                  allFields={hubColsWithCustom}
                   selected={hubDisplayFields}
                   onChange={(next) => setFields((f) => ({ ...f, hubFields: next }))}
                   showFoundBy={fields.showHubFoundBy ?? true}
@@ -492,7 +653,7 @@ export default function App() {
 
       <div className="ds-rule" />
       <section>
-        <ResultsTable selections={selections} maFields={maDisplayFields} hubFields={hubDisplayFields} />
+        <ResultsTable selections={selections} maFields={maDisplayFields} hubFields={hubDisplayFields} customColumns={customColumns} />
       </section>
 
       <div className="ds-rule" />
@@ -504,6 +665,11 @@ export default function App() {
           <Button onClick={goBack} disabled={matchingQueue.length === 0}>
             ← Go Back
           </Button>
+          {hubCols.length > 0 && (
+            <Button onClick={() => setCustomColBuilderOpen(true)}>
+              Custom Columns {customColumns.length > 0 ? `(${customColumns.length})` : ""}
+            </Button>
+          )}
         </div>
         {stage === "done" && <div className="ds-card-title" style={{ fontSize: "1.6rem", marginBottom: 0 }}>Finished. Export your table.</div>}
       </section>

@@ -1,15 +1,18 @@
 import React, { useMemo } from "react";
-import type { SelectionRow } from "../types";
+import type { CustomColumn, SelectionRow } from "../types";
+import { evaluateCustomColumn } from "../utils/customColumns";
 import { Card } from "./ui";
 
 export function ResultsTable({
   selections,
   maFields,
   hubFields,
+  customColumns,
 }: {
   selections: SelectionRow[];
   maFields: string[];
   hubFields: string[];
+  customColumns: CustomColumn[];
 }) {
   const rows = useMemo(() => selections, [selections]);
 
@@ -42,8 +45,16 @@ export function ResultsTable({
         {rows.map((r, index) => {
           const maSummary = maFields.map((f) => `${f}: ${String(r.maRow?.[f] ?? "")}`).join(" | ");
 
-          const hubSummary =
-            r.selectionType === "no_match" ? "No Match" : hubFields.map((f) => `${f}: ${String(r.hubRow?.[f] ?? "")}`).join(" | ");
+          let hubSummary: string;
+          if (r.selectionType === "no_match") {
+            hubSummary = "No Match";
+          } else {
+            const stdParts = hubFields.map((f) => `${f}: ${String(r.hubRow?.[f] ?? "")}`);
+            const customParts = customColumns
+              .filter((c) => c.name)
+              .map((c) => `${c.name}: ${r.hubRow ? evaluateCustomColumn(r.hubRow, c) : ""}`);
+            hubSummary = [...stdParts, ...customParts].join(" | ");
+          }
 
           return (
             <div
@@ -57,10 +68,16 @@ export function ResultsTable({
                 alignItems: "center",
               }}
             >
-              <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>{r.selectionType === "no_match" ? "No Match" : "Matched"}</div>
+              <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                {r.selectionType === "no_match" ? "No Match" : "Matched"}
+              </div>
               <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>{r.score ?? ""}</div>
-              <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{maSummary}</div>
-              <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hubSummary}</div>
+              <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {maSummary}
+              </div>
+              <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {hubSummary}
+              </div>
             </div>
           );
         })}

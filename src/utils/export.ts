@@ -1,11 +1,13 @@
 import * as XLSX from "xlsx";
-import type { RowObject, SelectionRow } from "../types";
+import type { RowObject, SelectionRow, CustomColumn } from "../types";
+import { evaluateCustomColumn } from "./customColumns";
 
 export function exportSelectionsToXlsx(
   selections: SelectionRow[],
   maFields: string[],
   hubFields: string[],
-  filename = "ma_hubspot_matches.xlsx"
+  filename = "ma_hubspot_matches.xlsx",
+  customColumns: CustomColumn[] = [],
 ) {
   const rows = selections.map((sel) => {
     const out: Record<string, any> = {};
@@ -18,20 +20,24 @@ export function exportSelectionsToXlsx(
 
     if (sel.selectionType === "hubspot") {
       for (const f of hubFields) out[`hub.${f}`] = sel.hubRow?.[f] ?? "";
+      for (const col of customColumns) {
+        out[col.name] = sel.hubRow ? evaluateCustomColumn(sel.hubRow, col) : "";
+      }
     } else {
       for (const f of hubFields) out[`hub.${f}`] = "";
+      for (const col of customColumns) out[col.name] = "";
     }
 
     return out;
   });
 
-  // ✅ Force ALL columns to exist in the sheet (and in a stable order)
   const header = [
     "match_status",
     "match_score",
     "found_by",
     ...maFields.map((f) => `ma.${f}`),
     ...hubFields.map((f) => `hub.${f}`),
+    ...customColumns.map((c) => c.name),
   ];
 
   const ws = XLSX.utils.json_to_sheet(rows, {
