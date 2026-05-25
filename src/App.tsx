@@ -5,6 +5,7 @@ import { parseCsvFile } from "./utils/csv";
 import { loadHubspotCache, saveHubspotCache, clearHubspotCache } from "./utils/storage";
 import { exportSelectionsToXlsx, exportRemainingToCsv } from "./utils/export";
 import { applyCustomColumns } from "./utils/customColumns";
+import { runBatchMatch } from "./utils/batchMatch";
 
 import { FileUploadCard } from "./components/FileUploadCard";
 import { ExportModal } from "./components/ExportModal";
@@ -183,6 +184,11 @@ export default function App() {
     () => [...hubCols, ...customColumns.filter((c) => c.name).map((c) => c.name)],
     [hubCols, customColumns],
   );
+
+  const batchPreviewCount = useMemo(() => {
+    if (!maRows.length || !hubRows.length || !mapping.maName || !mapping.hubName) return null;
+    return runBatchMatch(maRows, hubRows, mapping).matched.length;
+  }, [maRows, hubRows, mapping]);
 
   const maDisplayFields = fields.maFields.length ? fields.maFields : defaultMaFields;
   const hubDisplayFields = fields.hubFields.length ? fields.hubFields : defaultHubFields;
@@ -546,6 +552,17 @@ export default function App() {
                     </p>
                   </div>
                 </label>
+                {batchPreviewCount !== null && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.65rem" }}>
+                    <span
+                      className="ds-pill"
+                      style={{ background: "var(--foreground)", color: "var(--background)", fontSize: "0.72rem", fontFamily: "var(--font-mono)" }}
+                    >
+                      {batchPreviewCount.toLocaleString()} exact match{batchPreviewCount !== 1 ? "es" : ""} found
+                    </span>
+                    <span className="ds-meta ds-muted">preview based on current name mapping</span>
+                  </div>
+                )}
               </div>
             </div>
           </section>

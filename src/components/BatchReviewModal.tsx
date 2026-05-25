@@ -137,6 +137,7 @@ export function BatchReviewModal({
         style={{
           width: size ? size.width : "min(940px, 100%)",
           height: size ? size.height : undefined,
+          maxHeight: size ? undefined : "90vh",
           background: "var(--background)",
           boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
           display: "flex",
