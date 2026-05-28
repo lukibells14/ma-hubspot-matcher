@@ -1,5 +1,9 @@
 import type { BatchMatchItem, BatchMatchResult, ColumnMapping, RowObject } from "../types";
-import { normalizeWhitespace, stripPunctuation } from "./normalize";
+import {
+  normalizeWhitespace, stripPunctuation,
+  cleanDomain, coreName, makeAcronym, extractTokens,
+  generateSuffixVariants, looksLikeAcronym, acronymPunctKey,
+} from "./normalize";
 
 // Ordered longest-first so multi-word phrases replace before single words.
 // Both the full form and abbreviation normalize to the same canonical short form.
@@ -68,4 +72,69 @@ export function runBatchMatch(
   }
 
   return { matched, ambiguousCount, noMatchCount };
+}
+
+export function previewZeroCandidateCount(
+  maRows: RowObject[],
+  hubRows: RowObject[],
+  mapping: ColumnMapping,
+): number {
+  // Build lookup indexes from HubSpot rows (mirrors hasAnyCandidates in the worker)
+  const domainSet = new Set<string>();
+  const coreSet = new Set<string>();
+  const acrMap = new Map<string, number>(); // acr → hit count (respects the ≤40 guard)
+  const acrPunctSet = new Set<string>();
+  const tokenSet = new Set<string>();
+
+  for (const row of hubRows) {
+    const name = String(row?.[mapping.hubName] ?? "");
+
+    const dom = mapping.hubDomain ? cleanDomain(row?.[mapping.hubDomain]) : "";
+    if (dom) domainSet.add(dom);
+
+    const c = coreName(name);
+    if (c) coreSet.add(c);
+
+    const acr = makeAcronym(name);
+    if (acr) acrMap.set(acr, (acrMap.get(acr) ?? 0) + 1);
+    if (looksLikeAcronym(name)) {
+      const raw = name.replace(/[^A-Za-z]/g, "").toUpperCase();
+      if (raw.length >= 2) acrMap.set(raw, (acrMap.get(raw) ?? 0) + 1);
+    }
+
+    const ap = acronymPunctKey(name);
+    if (ap) acrPunctSet.add(ap);
+
+    for (const t of extractTokens(name)) tokenSet.add(t);
+  }
+
+  let count = 0;
+  for (const row of maRows) {
+    const maName = String(row?.[mapping.maName] ?? "");
+    const maDom = mapping.maDomain ? cleanDomain(row?.[mapping.maDomain]) : "";
+
+    if (maDom && domainSet.has(maDom)) continue;
+
+    const variants = generateSuffixVariants(maName);
+    if (variants.some((v) => { const k = coreName(v.variant); return !!k && coreSet.has(k); })) continue;
+
+    const maAcr = makeAcronym(maName);
+    if (maAcr) {
+      const hits = acrMap.get(maAcr) ?? 0;
+      if (hits > 0 && hits <= 40) continue;
+    }
+    if (looksLikeAcronym(maName)) {
+      const raw = maName.replace(/[^A-Za-z]/g, "").toUpperCase();
+      if ((acrMap.get(raw) ?? 0) > 0) continue;
+    }
+
+    const maAcrPunct = acronymPunctKey(maName);
+    if (maAcrPunct && acrPunctSet.has(maAcrPunct)) continue;
+
+    const toks = extractTokens(maName).sort((a, b) => b.length - a.length).slice(0, 6);
+    if (toks.some((t) => tokenSet.has(t))) continue;
+
+    count++;
+  }
+  return count;
 }

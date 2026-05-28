@@ -144,7 +144,7 @@ function RuleCard({
           <Select
             value={rule.logic}
             onChange={(e) => onChange({ ...rule, logic: e.target.value as "ALL" | "ANY" })}
-            style={{ width: 70 }}
+            style={{ width: "auto", minWidth: 72 }}
           >
             <option value="ALL">ALL</option>
             <option value="ANY">ANY</option>

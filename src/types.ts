@@ -24,7 +24,9 @@ export type FoundBy =
   | "token_block"
   | "fuzzy_scored"
   | "acronym_punct"
-  | "batch_exact";
+  | "batch_exact"
+  | "batch_zero"
+  | "hubspot_search";
 
 export type Candidate = {
   hubIndex: number;

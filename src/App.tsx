@@ -5,7 +5,7 @@ import { parseCsvFile } from "./utils/csv";
 import { loadHubspotCache, saveHubspotCache, clearHubspotCache } from "./utils/storage";
 import { exportSelectionsToXlsx, exportRemainingToCsv } from "./utils/export";
 import { applyCustomColumns } from "./utils/customColumns";
-import { runBatchMatch } from "./utils/batchMatch";
+import { runBatchMatch, previewZeroCandidateCount } from "./utils/batchMatch";
 
 import { FileUploadCard } from "./components/FileUploadCard";
 import { ExportModal } from "./components/ExportModal";
@@ -23,8 +23,10 @@ type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: { hubIndex: number; score: number; foundBy: any[] }[] }
-  | { type: "PRESCREEN_DONE"; hundredPct: number[]; rest: number[] }
+  | { type: "PRESCREEN_DONE"; hundredPct: number[]; highScore: number[]; rest: number[] }
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
+  | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
+  | { type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
   | { type: "ERROR"; message: string };
 
 export default function App() {
@@ -57,6 +59,8 @@ export default function App() {
   const [selections, setSelections] = useState<SelectionRow[]>([]);
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [hubspotSearchResults, setHubspotSearchResults] = useState<CandidateDisplay[]>([]);
+  const [hubspotSearchOverflow, setHubspotSearchOverflow] = useState(false);
 
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
   const [customColBuilderOpen, setCustomColBuilderOpen] = useState(false);
@@ -78,9 +82,13 @@ export default function App() {
   }, [customColumns]);
 
   const [enableBatchMode, setEnableBatchMode] = useState(false);
+  const [enableSkipZero, setEnableSkipZero] = useState(false);
   const [batchReviewOpen, setBatchReviewOpen] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchMatchResult | null>(null);
   const [batchAutoCount, setBatchAutoCount] = useState(0);
+  const [batchModalStep, setBatchModalStep] = useState<"exact" | "zero" | "summary">("exact");
+  const [zeroCandidateIndexes, setZeroCandidateIndexes] = useState<number[] | null>(null);
+  const [stagedExactSelections, setStagedExactSelections] = useState<SelectionRow[]>([]);
   const batchConfirmedSetRef = useRef<Set<number>>(new Set());
 
   const workerRef = useRef<Worker | null>(null);
@@ -113,13 +121,25 @@ export default function App() {
           }) as CandidateDisplay[];
 
         setCandidates(mapped);
+      } else if (msg.type === "HUBSPOT_SEARCH_RESULTS") {
+        const cols = customColumnsRef.current;
+        const results: CandidateDisplay[] = msg.hubIndexes.map((i) => {
+          const baseRow = hubRows[i];
+          const hubRow = cols.length > 0 ? { ...baseRow, ...applyCustomColumns(baseRow, cols) } : baseRow;
+          return { hubIndex: i, score: 100, foundBy: ["hubspot_search"] as any[], hubRow };
+        });
+        setHubspotSearchResults(results);
+        setHubspotSearchOverflow(msg.overflow);
       } else if (msg.type === "BATCH_MATCH_DONE") {
         setBatchResult(msg.result);
+        setBatchModalStep("exact");
         setBatchReviewOpen(true);
         setStatus(`Auto-match scan complete. Found ${msg.result.matched.length.toLocaleString()} exact matches.`);
+      } else if (msg.type === "ZERO_CANDIDATES_DONE") {
+        setZeroCandidateIndexes(msg.zeroIndexes);
       } else if (msg.type === "PRESCREEN_DONE") {
         const confirmed = batchConfirmedSetRef.current;
-        const queue = [...msg.hundredPct, ...msg.rest].filter((i) => !confirmed.has(i));
+        const queue = [...msg.hundredPct, ...msg.highScore, ...msg.rest].filter((i) => !confirmed.has(i));
         setMatchingQueue(queue);
         setCurrentQueuePos(0);
         if (queue.length > 0) {
@@ -190,6 +210,11 @@ export default function App() {
     return runBatchMatch(maRows, hubRows, mapping).matched.length;
   }, [maRows, hubRows, mapping]);
 
+  const zeroCandidatePreviewCount = useMemo(() => {
+    if (!maRows.length || !hubRows.length || !mapping.maName || !mapping.hubName) return null;
+    return previewZeroCandidateCount(maRows, hubRows, mapping);
+  }, [maRows, hubRows, mapping]);
+
   const maDisplayFields = fields.maFields.length ? fields.maFields : defaultMaFields;
   const hubDisplayFields = fields.hubFields.length ? fields.hubFields : defaultHubFields;
 
@@ -199,6 +224,8 @@ export default function App() {
     setMatchingQueue([]);
     setBatchAutoCount(0);
     batchConfirmedSetRef.current = new Set();
+    setStagedExactSelections([]);
+    setZeroCandidateIndexes(null);
     setStage("matching");
     setStatus("Indexing HubSpot...");
 
@@ -206,42 +233,92 @@ export default function App() {
     workerRef.current?.postMessage({ type: "START", maRows });
 
     if (enableBatchMode) {
+      setBatchModalStep("exact");
       setStatus("Indexing HubSpot... then running auto-match scan.");
       workerRef.current?.postMessage({ type: "BATCH_MATCH" });
+      if (enableSkipZero) {
+        workerRef.current?.postMessage({ type: "SCAN_ZERO_CANDIDATES" });
+      }
+    } else if (enableSkipZero) {
+      setBatchModalStep("zero");
+      setBatchReviewOpen(true);
+      workerRef.current?.postMessage({ type: "SCAN_ZERO_CANDIDATES" });
     } else {
       workerRef.current?.postMessage({ type: "PRESCREEN" });
     }
   };
 
-  const handleBatchConfirm = (confirmedItems: BatchMatchItem[]) => {
-    batchConfirmedSetRef.current = new Set(confirmedItems.map((i) => i.maIndex));
-    setBatchAutoCount(confirmedItems.length);
-
-    const autoSelections: SelectionRow[] = confirmedItems.map((item) => ({
-      maIndex: item.maIndex,
-      maRow: item.maRow,
-      selectionType: "hubspot",
-      hubIndex: item.hubIndex,
-      hubRow: item.hubRow,
-      score: 100,
-      foundBy: ["batch_exact"],
+  const applyBatchAndStart = (exactSels: SelectionRow[], zeroIndexes: number[]) => {
+    const zeroSels: SelectionRow[] = zeroIndexes.map((i) => ({
+      maIndex: i,
+      maRow: maRows[i],
+      selectionType: "no_match" as const,
     }));
 
-    setSelections(autoSelections);
+    const allAutoSels = [...exactSels, ...zeroSels];
+    batchConfirmedSetRef.current = new Set(allAutoSels.map((s) => s.maIndex));
+    setBatchAutoCount(exactSels.length);
+    setSelections(allAutoSels);
     setBatchReviewOpen(false);
     setBatchResult(null);
+    setZeroCandidateIndexes(null);
+    setStagedExactSelections([]);
     setStatus("Running prescreen for manual review queue...");
     workerRef.current?.postMessage({ type: "PRESCREEN" });
+  };
+
+  const handleBatchAction = (confirmed?: BatchMatchItem[]) => {
+    if (batchModalStep === "exact") {
+      const exactSels: SelectionRow[] = (confirmed ?? []).map((item) => ({
+        maIndex: item.maIndex,
+        maRow: item.maRow,
+        selectionType: "hubspot" as const,
+        hubIndex: item.hubIndex,
+        hubRow: item.hubRow,
+        score: 100,
+        foundBy: ["batch_exact"] as any[],
+      }));
+      if (enableSkipZero) {
+        setStagedExactSelections(exactSels);
+        setBatchModalStep("zero");
+      } else {
+        applyBatchAndStart(exactSels, []);
+      }
+    } else if (batchModalStep === "zero") {
+      if (enableBatchMode) {
+        setBatchModalStep("summary");
+      } else {
+        applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? []);
+      }
+    } else if (batchModalStep === "summary") {
+      applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? []);
+    }
+  };
+
+  const handleBatchBack = () => {
+    if (batchModalStep === "summary") setBatchModalStep("zero");
+    else if (batchModalStep === "zero") setBatchModalStep("exact");
   };
 
   const handleBatchCancel = () => {
     setBatchReviewOpen(false);
     setBatchResult(null);
+    setZeroCandidateIndexes(null);
+    setStagedExactSelections([]);
     setSelections([]);
     setMatchingQueue([]);
     batchConfirmedSetRef.current = new Set();
     setStage("ready");
     setStatus("Cancelled auto-match. Adjust settings and try again.");
+  };
+
+  const handleHubspotSearch = (query: string) => {
+    if (!query) {
+      setHubspotSearchResults([]);
+      setHubspotSearchOverflow(false);
+      return;
+    }
+    workerRef.current?.postMessage({ type: "HUBSPOT_SEARCH", query, maxResults: maxCandidatesRef.current });
   };
 
   const applySelection = (sel: SelectionRow) => {
@@ -358,7 +435,20 @@ export default function App() {
         defaultMaCols={defaultMaFields}
         defaultHubCols={defaultHubFields}
         customColumns={customColumns}
-        onConfirm={handleBatchConfirm}
+        step={batchModalStep}
+        isFirstStep={
+          enableBatchMode && enableSkipZero ? batchModalStep === "exact"
+          : true
+        }
+        isLastStep={
+          enableBatchMode && enableSkipZero ? batchModalStep === "summary"
+          : true
+        }
+        zeroCandidateCount={zeroCandidateIndexes?.length ?? null}
+        confirmedExactCount={stagedExactSelections.length}
+        totalMaCount={maRows.length}
+        onAction={handleBatchAction}
+        onBack={handleBatchBack}
         onCancel={handleBatchCancel}
       />
 
@@ -550,19 +640,45 @@ export default function App() {
                       lets you review them in a preview before starting manual review. Ambiguous (2+ matches) and
                       unmatched records always proceed to manual review.
                     </p>
+                    {batchPreviewCount !== null && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        <span
+                          className="ds-pill"
+                          style={{ background: "var(--foreground)", color: "var(--background)", fontSize: "0.72rem", fontFamily: "var(--font-mono)" }}
+                        >
+                          {batchPreviewCount.toLocaleString()} exact match{batchPreviewCount !== 1 ? "es" : ""} found
+                        </span>
+                        <span className="ds-meta ds-muted">preview</span>
+                      </div>
+                    )}
                   </div>
                 </label>
-                {batchPreviewCount !== null && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.65rem" }}>
-                    <span
-                      className="ds-pill"
-                      style={{ background: "var(--foreground)", color: "var(--background)", fontSize: "0.72rem", fontFamily: "var(--font-mono)" }}
-                    >
-                      {batchPreviewCount.toLocaleString()} exact match{batchPreviewCount !== 1 ? "es" : ""} found
-                    </span>
-                    <span className="ds-meta ds-muted">preview based on current name mapping</span>
+                <label style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", cursor: "pointer", marginTop: "0.5rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={enableSkipZero}
+                    onChange={(e) => setEnableSkipZero(e.target.checked)}
+                    style={{ marginTop: "0.15rem", flexShrink: 0 }}
+                  />
+                  <div>
+                    <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto skip zero-candidate records</span>
+                    <p className="ds-meta ds-muted" style={{ marginTop: "0.2rem", marginBottom: 0 }}>
+                      Automatically marks records with no HubSpot candidates as No Match, removing them from
+                      manual review. Scans the index before starting — no scoring required.
+                    </p>
+                    {zeroCandidatePreviewCount !== null && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        <span
+                          className="ds-pill"
+                          style={{ background: "var(--foreground)", color: "var(--background)", fontSize: "0.72rem", fontFamily: "var(--font-mono)" }}
+                        >
+                          {zeroCandidatePreviewCount.toLocaleString()} record{zeroCandidatePreviewCount !== 1 ? "s" : ""} will be auto-skipped
+                        </span>
+                        <span className="ds-meta ds-muted">preview</span>
+                      </div>
+                    )}
                   </div>
-                )}
+                </label>
               </div>
             </div>
           </section>
@@ -627,9 +743,7 @@ export default function App() {
                   <input
                     type="number"
                     value={maxCandidates}
-                    min={10}
-                    max={1000}
-                    onChange={(e) => setMaxCandidates(Math.max(10, Math.min(1000, parseInt(e.target.value) || 100)))}
+                    onChange={(e) => setMaxCandidates(Math.max(1, parseInt(e.target.value) || 100))}
                     style={{ width: 70, border: "2px solid var(--foreground)", padding: "0.2rem 0.4rem", background: "var(--background)", fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}
                   />
                 </div>
@@ -645,6 +759,9 @@ export default function App() {
               showFoundBy={fields.showHubFoundBy ?? true}
               candidates={candidates}
               previousSelection={previousSelection}
+              onHubspotSearch={handleHubspotSearch}
+              hubspotResults={hubspotSearchResults}
+              hubspotResultsOverflow={hubspotSearchOverflow}
               onSelectHub={(c) =>
                 applySelection({
                   maIndex: currentIndex,
