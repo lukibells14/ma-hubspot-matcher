@@ -31,16 +31,17 @@ export function MatchViewer({
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"candidates" | "hubspot">("candidates");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stickyModeRef = useRef<"candidates" | "hubspot">("candidates");
 
   const noMatchItem = useMemo<CandidateDisplay>(
     () => ({ hubIndex: -1, score: 0, foundBy: [], hubRow: { __label: "No Match" } }),
     [],
   );
 
-  // Reset everything when M&A row changes
+  // Reset everything when M&A row changes, but preserve mode if last selection used HubSpot
   useEffect(() => {
     setActive(0);
-    setSearchMode("candidates");
+    setSearchMode(stickyModeRef.current);
     setQuery("");
   }, [maRow]);
 
@@ -88,6 +89,16 @@ export function MatchViewer({
     setActive((a) => Math.min(a, Math.max(displayItems.length - 1, 0)));
   }, [displayItems.length]);
 
+  const handleSelectHub = (c: CandidateDisplay) => {
+    stickyModeRef.current = searchMode;
+    onSelectHub(c);
+  };
+
+  const handleSelectNoMatch = () => {
+    stickyModeRef.current = searchMode;
+    onSelectNoMatch();
+  };
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "ArrowDown") {
@@ -100,13 +111,13 @@ export function MatchViewer({
         e.preventDefault();
         const selected = displayItems[active];
         if (!selected) return;
-        if (selected.hubIndex === -1) onSelectNoMatch();
-        else onSelectHub(selected);
+        if (selected.hubIndex === -1) handleSelectNoMatch();
+        else handleSelectHub(selected);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, displayItems, onSelectHub, onSelectNoMatch]);
+  }, [active, displayItems, handleSelectHub, handleSelectNoMatch]);
 
   const prevOffset = candidateItems.some((c) => (c as any).__isPrevious) ? 1 : 0;
   const totalCandidates = candidateItems.length - 1 - prevOffset;
@@ -268,8 +279,8 @@ export function MatchViewer({
                   key={`${c.hubIndex}-${index}`}
                   onClick={() => {
                     setActive(index);
-                    if (isNoMatch) onSelectNoMatch();
-                    else onSelectHub(c);
+                    if (isNoMatch) handleSelectNoMatch();
+                    else handleSelectHub(c);
                   }}
                   style={{
                     display: "grid",
