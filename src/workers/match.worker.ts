@@ -431,7 +431,15 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
         else rest.push(i);
       }
 
-      (self as any).postMessage({ type: "PRESCREEN_DONE", hundredPct, highScore, rest } satisfies WorkerOut);
+      // Sort rest by top candidate score descending so highest-confidence fuzzy matches are reviewed first
+      const restWithScores = rest.map((i) => {
+        const top = getCandidatesFor(MA[i]!, 1);
+        return { i, score: top[0]?.score ?? 0 };
+      });
+      restWithScores.sort((a, b) => b.score - a.score);
+      const sortedRest = restWithScores.map((r) => r.i);
+
+      (self as any).postMessage({ type: "PRESCREEN_DONE", hundredPct, highScore, rest: sortedRest } satisfies WorkerOut);
       return;
     }
 
