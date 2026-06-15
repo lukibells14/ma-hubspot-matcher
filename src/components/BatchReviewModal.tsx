@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BatchMatchItem, BatchMatchResult, CustomColumn } from "../types";
+import type { BatchMatchItem, BatchMatchResult, CustomColumn, RowObject } from "../types";
 import { applyCustomColumns } from "../utils/customColumns";
 import { useResizable } from "../hooks/useResizable";
 import { Button } from "./ui";
@@ -48,6 +48,11 @@ export function BatchReviewModal({
   isFirstStep = true,
   isLastStep = true,
   zeroCandidateCount = null,
+  lowConfidenceData = [],
+  lowConfidenceThreshold = 60,
+  onThresholdChange,
+  maRows = [],
+  maNameCol = "",
   confirmedExactCount = 0,
   totalMaCount = 0,
   onAction,
@@ -61,10 +66,15 @@ export function BatchReviewModal({
   defaultMaCols: string[];
   defaultHubCols: string[];
   customColumns: CustomColumn[];
-  step?: "exact" | "zero" | "summary";
+  step?: "exact" | "zero" | "low_confidence" | "summary";
   isFirstStep?: boolean;
   isLastStep?: boolean;
   zeroCandidateCount?: number | null;
+  lowConfidenceData?: { maIndex: number; topScore: number }[];
+  lowConfidenceThreshold?: number;
+  onThresholdChange?: (v: number) => void;
+  maRows?: RowObject[];
+  maNameCol?: string;
   confirmedExactCount?: number;
   totalMaCount?: number;
   onAction: (confirmed?: BatchMatchItem[]) => void;
@@ -132,14 +142,16 @@ export function BatchReviewModal({
 
   // Summary numbers
   const netZero = zeroCandidateCount ?? 0;
-  const remainingCount = Math.max(totalMaCount - confirmedExactCount - netZero, 0);
+  const lowConfCount = lowConfidenceData.filter((c) => c.topScore < lowConfidenceThreshold).length;
+  const remainingCount = Math.max(totalMaCount - confirmedExactCount - netZero - lowConfCount, 0);
 
   // Header text per step
   const stepKicker = step === "exact" ? "Batch Auto-Match" : "Batch Processing";
   const stepTitle =
-    step === "exact" ? "Auto-Match Preview" :
-    step === "zero"  ? "Zero-Candidate Skip" :
-                       "Batch Summary";
+    step === "exact"           ? "Auto-Match Preview" :
+    step === "zero"            ? "Zero-Candidate Skip" :
+    step === "low_confidence"  ? "Low-Confidence Skip" :
+                                 "Batch Summary";
 
   const primaryLabel = isLastStep ? "Confirm & Start Manual Review →" : "Next →";
 
@@ -306,6 +318,74 @@ export function BatchReviewModal({
           </div>
         )}
 
+        {/* ── LOW CONFIDENCE STEP ── */}
+        {step === "low_confidence" && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem", minHeight: 0 }}>
+            <div className="ds-card-muted" style={{ padding: "1rem", display: "flex", gap: "1.5rem", flexWrap: "wrap", alignItems: "center", flexShrink: 0 }}>
+              <div>
+                <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Records to skip</div>
+                <div style={{ fontSize: "2rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
+                  {lowConfidenceData.length === 0
+                    ? <span style={{ fontSize: "1rem", opacity: 0.6 }}>Scanning…</span>
+                    : lowConfCount.toLocaleString()}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                <span className="ds-meta ds-muted">Skip if top score &lt;</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={lowConfidenceThreshold}
+                  onChange={(e) => onThresholdChange?.(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                  style={{ width: 64, fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 700, padding: "0.2rem 0.4rem", border: "2px solid var(--foreground)" }}
+                />
+                <span className="ds-meta ds-muted">(0 – 100)</span>
+              </div>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <p className="ds-meta ds-muted" style={{ margin: 0 }}>
+                  Records whose top candidate scores below the threshold AND whose first meaningful word returns
+                  zero HubSpot results will be auto-marked as No Match.
+                </p>
+              </div>
+            </div>
+
+            <div className="ds-table-wrap" style={{ flex: 1, minHeight: 120, overflowY: "auto" }}>
+              {lowConfidenceData.length === 0 ? (
+                <div className="ds-card-muted" style={{ padding: "2rem", textAlign: "center" }}>
+                  <span className="ds-meta ds-muted">Scanning records…</span>
+                </div>
+              ) : lowConfCount === 0 ? (
+                <div className="ds-card-muted" style={{ padding: "2rem", textAlign: "center" }}>
+                  <span className="ds-meta ds-muted">No records qualify at this threshold — nothing will be auto-skipped.</span>
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>M&A Name</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>Top Score</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lowConfidenceData
+                      .filter((c) => c.topScore < lowConfidenceThreshold)
+                      .map((c) => {
+                        const name = maNameCol ? String(maRows[c.maIndex]?.[maNameCol] ?? c.maIndex) : String(c.maIndex);
+                        return (
+                          <tr key={c.maIndex}>
+                            <td style={tdStyle} title={name}>{name}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{c.topScore}</td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── SUMMARY STEP ── */}
         {step === "summary" && (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: "1rem" }}>
@@ -320,6 +400,12 @@ export function BatchReviewModal({
                 <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Auto No Match (zero candidates)</div>
                 <div style={{ fontSize: "1.8rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
                   {netZero.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Auto No Match (low confidence)</div>
+                <div style={{ fontSize: "1.8rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
+                  {lowConfCount.toLocaleString()}
                 </div>
               </div>
               <div>
@@ -349,7 +435,10 @@ export function BatchReviewModal({
             <Button
               variant="primary"
               onClick={handlePrimaryAction}
-              disabled={step === "zero" && zeroCandidateCount === null}
+              disabled={
+                (step === "zero" && zeroCandidateCount === null) ||
+                (step === "low_confidence" && lowConfidenceData.length === 0)
+              }
             >
               {primaryLabel}
             </Button>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CandidateDisplay, RowObject, SelectionRow } from "../types";
+import { getFirstMeaningfulWord } from "../utils/normalize";
 import { Input } from "./ui";
 
 export function MatchViewer({
@@ -30,19 +31,28 @@ export function MatchViewer({
   const [active, setActive] = useState(0);
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<"candidates" | "hubspot">("candidates");
+  const [autoFill, setAutoFill] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stickyModeRef = useRef<"candidates" | "hubspot">("candidates");
+  const autoFillRef = useRef(false);
 
   const noMatchItem = useMemo<CandidateDisplay>(
     () => ({ hubIndex: -1, score: 0, foundBy: [], hubRow: { __label: "No Match" } }),
     [],
   );
 
-  // Reset everything when M&A row changes, but preserve mode if last selection used HubSpot
+  // Reset everything when M&A row changes, but preserve mode and autofill state
   useEffect(() => {
     setActive(0);
     setSearchMode(stickyModeRef.current);
-    setQuery("");
+    if (autoFillRef.current && stickyModeRef.current === "hubspot") {
+      const maName = String(maRow?.[maFields[0]] ?? "");
+      const firstWord = getFirstMeaningfulWord(maName);
+      setQuery(firstWord);
+      if (firstWord) onHubspotSearch(firstWord);
+    } else {
+      setQuery("");
+    }
   }, [maRow]);
 
   // Debounced HubSpot dataset search
@@ -138,7 +148,26 @@ export function MatchViewer({
 
   const switchToHub = () => {
     setSearchMode("hubspot");
-    onHubspotSearch(query.trim());
+    if (autoFillRef.current && !query.trim()) {
+      const maName = String(maRow?.[maFields[0]] ?? "");
+      const firstWord = getFirstMeaningfulWord(maName);
+      setQuery(firstWord);
+      onHubspotSearch(firstWord);
+    } else {
+      onHubspotSearch(query.trim());
+    }
+  };
+
+  const handleToggleAutoFill = () => {
+    const next = !autoFill;
+    setAutoFill(next);
+    autoFillRef.current = next;
+    if (next && searchMode === "hubspot" && !query.trim()) {
+      const maName = String(maRow?.[maFields[0]] ?? "");
+      const firstWord = getFirstMeaningfulWord(maName);
+      setQuery(firstWord);
+      if (firstWord) onHubspotSearch(firstWord);
+    }
   };
 
   return (
@@ -163,7 +192,7 @@ export function MatchViewer({
           <div className="ds-meta ds-muted">Use UP/DOWN then Enter</div>
         </div>
 
-        {/* Mode toggle + search input */}
+        {/* Mode toggle + search input + autofill toggle */}
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.6rem", flexWrap: "wrap" }}>
           <div style={{ display: "flex", border: "2px solid var(--foreground)", flexShrink: 0 }}>
             <button
@@ -206,9 +235,25 @@ export function MatchViewer({
             onChange={(e) => setQuery(e.target.value)}
             placeholder={isHubMode ? "Search by company name…" : "Filter by company name…"}
           />
-          {query.trim() && (
-            <button className="ds-linklike" onClick={() => setQuery("")}>Clear</button>
-          )}
+          <button
+            onClick={handleToggleAutoFill}
+            title="Auto-fill search with first word of M&A name"
+            style={{
+              marginLeft: "auto",
+              padding: "0.25rem 0.65rem",
+              fontSize: "0.72rem",
+              fontFamily: "var(--font-mono)",
+              fontWeight: 700,
+              letterSpacing: "0.03em",
+              cursor: "pointer",
+              border: "2px solid var(--foreground)",
+              background: autoFill ? "var(--foreground)" : "var(--background)",
+              color: autoFill ? "var(--background)" : "var(--foreground)",
+              flexShrink: 0,
+            }}
+          >
+            AUTO-FILL {autoFill ? "ON" : "OFF"}
+          </button>
         </div>
 
         {/* Count / status line */}

@@ -30,7 +30,8 @@ export type FoundBy =
   | "and_ampersand_variant"
   | "the_prefix_variant"
   | "trailing_s_variant"
-  | "dba_variant";
+  | "dba_variant"
+  | "batch_low_confidence";
 
 export type Candidate = {
   hubIndex: number;

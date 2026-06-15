@@ -6,6 +6,7 @@ import {
   extractTokens,
   generateSuffixVariants,
   extractDbaVariants,
+  getFirstMeaningfulWord,
   diceSimilarity,
   looksLikeAcronym,
   acronymPunctKey,
@@ -19,7 +20,8 @@ type PrescreenMsg = { type: "PRESCREEN" };
 type BatchMatchMsg = { type: "BATCH_MATCH" };
 type HubspotSearchMsg = { type: "HUBSPOT_SEARCH"; query: string; maxResults: number };
 type ScanZeroCandidatesMsg = { type: "SCAN_ZERO_CANDIDATES" };
-type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg | PrescreenMsg | BatchMatchMsg | HubspotSearchMsg | ScanZeroCandidatesMsg;
+type ScanLowConfidenceMsg = { type: "SCAN_LOW_CONFIDENCE" };
+type WorkerMsg = InitMsg | StartMsg | GetCandidatesMsg | PrescreenMsg | BatchMatchMsg | HubspotSearchMsg | ScanZeroCandidatesMsg | ScanLowConfidenceMsg;
 
 type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
@@ -29,6 +31,7 @@ type WorkerOut =
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
   | { type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
+  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number }[] }
   | { type: "ERROR"; message: string };
 
 let HUB: RowObject[] = [];
@@ -391,6 +394,25 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
         if (row && !hasAnyCandidates(row)) zeroIndexes.push(i);
       }
       (self as any).postMessage({ type: "ZERO_CANDIDATES_DONE", zeroIndexes } satisfies WorkerOut);
+      return;
+    }
+
+    if (msg.type === "SCAN_LOW_CONFIDENCE") {
+      if (!mapping) return;
+      const results: { maIndex: number; topScore: number }[] = [];
+      for (let i = 0; i < MA.length; i++) {
+        const row = MA[i];
+        if (!row) continue;
+        const maName = String(row[mapping.maName] ?? "");
+        const firstWord = getFirstMeaningfulWord(maName);
+        if (!firstWord) continue;
+        const hasResults = HUB_SEARCH_INDEX.some(r => r.values.some(v => v.includes(firstWord)));
+        if (hasResults) continue;
+        const top = getCandidatesFor(row, 1);
+        const topScore = top[0]?.score ?? 0;
+        results.push({ maIndex: i, topScore });
+      }
+      (self as any).postMessage({ type: "LOW_CONFIDENCE_DONE", candidates: results } satisfies WorkerOut);
       return;
     }
 

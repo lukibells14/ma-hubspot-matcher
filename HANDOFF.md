@@ -97,16 +97,30 @@ Builds 6 lookup indexes at startup: domain, core name, acronym, token, acronym+p
 
 Files: `src/workers/match.worker.ts`, `src/utils/normalize.ts`
 
-### 5. Batch Auto-Match (Optional)
-An optional pre-step before manual review. Enabled via the **Batch Options** toggle on the ready screen.
+### 5. Batch Options (Optional)
+Three optional pre-steps before manual review, enabled via the **Batch Options** section on the ready screen. Any combination can be enabled — steps open in sequence: exact → zero → low_confidence → summary (summary only appears when 2+ options are active).
 
-- Runs **exact-name-only** matching (no fuzzy, no suffix/acronym strategies)
-- Normalizes both sides with abbreviation canonicalization: `corporation→corp`, `incorporated→inc`, `limited liability company→llc`, etc. — so "Acme Corporation" matches "Acme Corp"
-- **1-to-1 only**: if two HubSpot records match the same M&A name, both are sent to manual review instead
-- Results open in **BatchReviewModal**: shows match counts (exact / ambiguous / no-match), column selectors for M&A and HubSpot fields, per-row checkboxes to uncheck incorrect matches
-- Confirmed matches go directly to the Results table with `foundBy: ["batch_exact"]` and score 100
-- Unchecked/rejected matches are added back to the manual review queue
-- **Preview count**: even before running, the ready screen shows how many exact matches would be found based on the current name mapping
+**Auto-match exact names (`batch_exact`)**
+- Runs exact-name-only matching (no fuzzy/suffix/acronym)
+- Normalizes abbreviations: `corporation→corp`, `incorporated→inc`, etc.
+- 1-to-1 only — ambiguous (2+) matches go to manual review
+- Results in BatchReviewModal with per-row checkboxes to uncheck incorrect matches
+- Preview count shown on ready screen
+
+**Auto skip zero-candidate records (`batch_zero`)**
+- Marks records with zero index hits as No Match before manual review
+- No scoring required — index lookup only
+- Preview count shown on ready screen
+
+**Auto skip low-confidence records (`batch_low_confidence`)**
+- Marks records as No Match when **both** conditions are true:
+  1. Top candidate score < threshold (0–100, default 60, user-adjustable)
+  2. First meaningful word of M&A name (skipping "The", "A", "An") returns 0 HubSpot search results
+- Dialog shows live count that updates instantly as threshold is changed (0–100 range, all values valid)
+- Skipped records appear in results table with `foundBy: ["batch_low_confidence"]`
+- Progress bar and count updated immediately on confirm
+
+All three options update the progress bar, results table, and manual review queue on confirm.
 
 Files: `src/utils/batchMatch.ts`, `src/components/BatchReviewModal.tsx`
 
@@ -164,6 +178,13 @@ The MatchViewer has two modes toggled by a button pair:
 - **HUBSPOT SEARCH** — full-text search across the entire HubSpot dataset by company name (debounced 150ms)
 
 The mode is **sticky**: when a selection is made, the mode used is remembered via `stickyModeRef`. The next M&A row opens in the same mode. Defaults to CANDIDATES on first load.
+
+**AUTO-FILL toggle** (right-aligned, same row as mode buttons):
+- When ON + in HUBSPOT SEARCH mode: automatically fills the search input with the first meaningful word of the M&A company name (skipping "The", "A", "An") and fires the search immediately on every row navigation
+- When toggled ON while already in HUBSPOT SEARCH with empty input: auto-fills and fires immediately
+- When switching to HUBSPOT SEARCH mode with AUTO-FILL ON and empty input: auto-fills immediately
+- Persists across row navigation via `autoFillRef`
+- No clear button — user deletes manually
 
 File: `src/components/MatchViewer.tsx`
 

@@ -28,6 +28,7 @@ type WorkerOut =
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
   | { type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
+  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number }[] }
   | { type: "ERROR"; message: string };
 
 export default function App() {
@@ -85,10 +86,14 @@ export default function App() {
 
   const [enableBatchMode, setEnableBatchMode] = useState(false);
   const [enableSkipZero, setEnableSkipZero] = useState(false);
+  const [enableSkipLowConfidence, setEnableSkipLowConfidence] = useState(false);
+  const [lowConfidenceThreshold, setLowConfidenceThreshold] = useState(60);
+  const [lowConfidenceData, setLowConfidenceData] = useState<{ maIndex: number; topScore: number }[]>([]);
+  const [stagedLowConfidenceIndexes, setStagedLowConfidenceIndexes] = useState<number[]>([]);
   const [batchReviewOpen, setBatchReviewOpen] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchMatchResult | null>(null);
   const [batchAutoCount, setBatchAutoCount] = useState(0);
-  const [batchModalStep, setBatchModalStep] = useState<"exact" | "zero" | "summary">("exact");
+  const [batchModalStep, setBatchModalStep] = useState<"exact" | "zero" | "low_confidence" | "summary">("exact");
   const [zeroCandidateIndexes, setZeroCandidateIndexes] = useState<number[] | null>(null);
   const [stagedExactSelections, setStagedExactSelections] = useState<SelectionRow[]>([]);
   const batchConfirmedSetRef = useRef<Set<number>>(new Set());
@@ -139,6 +144,8 @@ export default function App() {
         setStatus(`Auto-match scan complete. Found ${msg.result.matched.length.toLocaleString()} exact matches.`);
       } else if (msg.type === "ZERO_CANDIDATES_DONE") {
         setZeroCandidateIndexes(msg.zeroIndexes);
+      } else if (msg.type === "LOW_CONFIDENCE_DONE") {
+        setLowConfidenceData(msg.candidates);
       } else if (msg.type === "PRESCREEN_DONE") {
         const confirmed = batchConfirmedSetRef.current;
         const queue = [...msg.hundredPct, ...msg.highScore, ...msg.rest].filter((i) => !confirmed.has(i));
@@ -220,6 +227,15 @@ export default function App() {
   const maDisplayFields = fields.maFields.length ? fields.maFields : defaultMaFields;
   const hubDisplayFields = fields.hubFields.length ? fields.hubFields : defaultHubFields;
 
+  const batchSteps = useMemo(() => {
+    const steps: ("exact" | "zero" | "low_confidence" | "summary")[] = [];
+    if (enableBatchMode) steps.push("exact");
+    if (enableSkipZero) steps.push("zero");
+    if (enableSkipLowConfidence) steps.push("low_confidence");
+    if ([enableBatchMode, enableSkipZero, enableSkipLowConfidence].filter(Boolean).length >= 2) steps.push("summary");
+    return steps;
+  }, [enableBatchMode, enableSkipZero, enableSkipLowConfidence]);
+
   const startMatching = () => {
     setSelections([]);
     setCurrentQueuePos(0);
@@ -227,49 +243,68 @@ export default function App() {
     setBatchAutoCount(0);
     batchConfirmedSetRef.current = new Set();
     setStagedExactSelections([]);
+    setStagedLowConfidenceIndexes([]);
     setZeroCandidateIndexes(null);
+    setLowConfidenceData([]);
     setStage("matching");
     setStatus("Indexing HubSpot...");
 
     workerRef.current?.postMessage({ type: "INIT", hubRows, mapping });
     workerRef.current?.postMessage({ type: "START", maRows });
 
-    if (enableBatchMode) {
-      setBatchModalStep("exact");
-      setStatus("Indexing HubSpot... then running auto-match scan.");
-      workerRef.current?.postMessage({ type: "BATCH_MATCH" });
+    const anyBatch = enableBatchMode || enableSkipZero || enableSkipLowConfidence;
+    if (anyBatch) {
+      const firstStep = batchSteps[0];
+      setBatchModalStep(firstStep ?? "exact");
+      if (enableBatchMode) {
+        setStatus("Indexing HubSpot... then running auto-match scan.");
+        workerRef.current?.postMessage({ type: "BATCH_MATCH" });
+      }
       if (enableSkipZero) {
         workerRef.current?.postMessage({ type: "SCAN_ZERO_CANDIDATES" });
       }
-    } else if (enableSkipZero) {
-      setBatchModalStep("zero");
-      setBatchReviewOpen(true);
-      workerRef.current?.postMessage({ type: "SCAN_ZERO_CANDIDATES" });
+      if (enableSkipLowConfidence) {
+        workerRef.current?.postMessage({ type: "SCAN_LOW_CONFIDENCE" });
+      }
+      if (!enableBatchMode) {
+        setBatchReviewOpen(true);
+      }
     } else {
       workerRef.current?.postMessage({ type: "PRESCREEN" });
     }
   };
 
-  const applyBatchAndStart = (exactSels: SelectionRow[], zeroIndexes: number[]) => {
+  const applyBatchAndStart = (exactSels: SelectionRow[], zeroIndexes: number[], lowConfIndexes: number[]) => {
     const zeroSels: SelectionRow[] = zeroIndexes.map((i) => ({
       maIndex: i,
       maRow: maRows[i],
       selectionType: "no_match" as const,
     }));
+    const lowConfSels: SelectionRow[] = lowConfIndexes.map((i) => ({
+      maIndex: i,
+      maRow: maRows[i],
+      selectionType: "no_match" as const,
+      foundBy: ["batch_low_confidence"] as any[],
+    }));
 
-    const allAutoSels = [...exactSels, ...zeroSels];
+    const allAutoSels = [...exactSels, ...zeroSels, ...lowConfSels];
     batchConfirmedSetRef.current = new Set(allAutoSels.map((s) => s.maIndex));
     setBatchAutoCount(exactSels.length);
     setSelections(allAutoSels);
     setBatchReviewOpen(false);
     setBatchResult(null);
     setZeroCandidateIndexes(null);
+    setLowConfidenceData([]);
     setStagedExactSelections([]);
+    setStagedLowConfidenceIndexes([]);
     setStatus("Running prescreen for manual review queue...");
     workerRef.current?.postMessage({ type: "PRESCREEN" });
   };
 
   const handleBatchAction = (confirmed?: BatchMatchItem[]) => {
+    const currentIdx = batchSteps.indexOf(batchModalStep);
+    const nextStep = batchSteps[currentIdx + 1];
+
     if (batchModalStep === "exact") {
       const exactSels: SelectionRow[] = (confirmed ?? []).map((item) => ({
         maIndex: item.maIndex,
@@ -280,33 +315,37 @@ export default function App() {
         score: 100,
         foundBy: ["batch_exact"] as any[],
       }));
-      if (enableSkipZero) {
-        setStagedExactSelections(exactSels);
-        setBatchModalStep("zero");
-      } else {
-        applyBatchAndStart(exactSels, []);
-      }
+      setStagedExactSelections(exactSels);
+      if (nextStep) setBatchModalStep(nextStep);
+      else applyBatchAndStart(exactSels, [], []);
     } else if (batchModalStep === "zero") {
-      if (enableBatchMode) {
-        setBatchModalStep("summary");
-      } else {
-        applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? []);
-      }
+      if (nextStep) setBatchModalStep(nextStep);
+      else applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], []);
+    } else if (batchModalStep === "low_confidence") {
+      const lowConfIndexes = lowConfidenceData
+        .filter((c) => c.topScore < lowConfidenceThreshold)
+        .map((c) => c.maIndex);
+      setStagedLowConfidenceIndexes(lowConfIndexes);
+      if (nextStep) setBatchModalStep(nextStep);
+      else applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], lowConfIndexes);
     } else if (batchModalStep === "summary") {
-      applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? []);
+      applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], stagedLowConfidenceIndexes);
     }
   };
 
   const handleBatchBack = () => {
-    if (batchModalStep === "summary") setBatchModalStep("zero");
-    else if (batchModalStep === "zero") setBatchModalStep("exact");
+    const currentIdx = batchSteps.indexOf(batchModalStep);
+    const prevStep = batchSteps[currentIdx - 1];
+    if (prevStep) setBatchModalStep(prevStep);
   };
 
   const handleBatchCancel = () => {
     setBatchReviewOpen(false);
     setBatchResult(null);
     setZeroCandidateIndexes(null);
+    setLowConfidenceData([]);
     setStagedExactSelections([]);
+    setStagedLowConfidenceIndexes([]);
     setSelections([]);
     setMatchingQueue([]);
     batchConfirmedSetRef.current = new Set();
@@ -438,15 +477,14 @@ export default function App() {
         defaultHubCols={defaultHubFields}
         customColumns={customColumns}
         step={batchModalStep}
-        isFirstStep={
-          enableBatchMode && enableSkipZero ? batchModalStep === "exact"
-          : true
-        }
-        isLastStep={
-          enableBatchMode && enableSkipZero ? batchModalStep === "summary"
-          : true
-        }
+        isFirstStep={batchSteps.indexOf(batchModalStep) === 0}
+        isLastStep={batchSteps.indexOf(batchModalStep) === batchSteps.length - 1}
         zeroCandidateCount={zeroCandidateIndexes?.length ?? null}
+        lowConfidenceData={lowConfidenceData}
+        lowConfidenceThreshold={lowConfidenceThreshold}
+        onThresholdChange={setLowConfidenceThreshold}
+        maRows={maRows}
+        maNameCol={mapping.maName}
         confirmedExactCount={stagedExactSelections.length}
         totalMaCount={maRows.length}
         onAction={handleBatchAction}
@@ -698,6 +736,33 @@ export default function App() {
                         <span className="ds-meta ds-muted">preview</span>
                       </div>
                     )}
+                  </div>
+                </label>
+                <label style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", cursor: "pointer", marginTop: "0.5rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={enableSkipLowConfidence}
+                    onChange={(e) => setEnableSkipLowConfidence(e.target.checked)}
+                    style={{ marginTop: "0.15rem", flexShrink: 0 }}
+                  />
+                  <div>
+                    <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto skip low-confidence records</span>
+                    <p className="ds-meta ds-muted" style={{ marginTop: "0.2rem", marginBottom: 0 }}>
+                      Automatically marks records as No Match when their top candidate scores below the threshold
+                      AND the first word of the M&A name returns zero results in HubSpot. Score range: 0–100.
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
+                      <span className="ds-meta ds-muted">Skip if top score &lt;</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={lowConfidenceThreshold}
+                        onChange={(e) => setLowConfidenceThreshold(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                        style={{ width: 60, fontFamily: "var(--font-mono)", fontSize: 13, padding: "0.15rem 0.3rem", border: "2px solid var(--foreground)" }}
+                      />
+                      <span className="ds-meta ds-muted">— live count shown in dialog</span>
+                    </div>
                   </div>
                 </label>
               </div>

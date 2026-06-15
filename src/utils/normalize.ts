@@ -184,6 +184,18 @@ export function extractDbaVariants(name: any): string[] {
   return [before, after].filter(Boolean);
 }
 
+const LEADING_SKIP = new Set(["the", "a", "an"]);
+
+/** Returns the first meaningful word of a company name, skipping leading articles like "The". */
+export function getFirstMeaningfulWord(name: string): string {
+  const words = String(name ?? "").trim().split(/\s+/);
+  for (const w of words) {
+    const clean = w.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (clean && !LEADING_SKIP.has(clean)) return clean;
+  }
+  return words[0]?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
+}
+
 export function diceSimilarity(a: string, b: string): number {
   a = normalizeNameRaw(a);
   b = normalizeNameRaw(b);
