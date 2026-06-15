@@ -749,20 +749,9 @@ export default function App() {
                     <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto skip low-confidence records</span>
                     <p className="ds-meta ds-muted" style={{ marginTop: "0.2rem", marginBottom: 0 }}>
                       Automatically marks records as No Match when their top candidate scores below the threshold
-                      AND the first word of the M&A name returns zero results in HubSpot. Score range: 0–100.
+                      AND the first word of the M&A name returns zero results in HubSpot. Adjust the score threshold
+                      in the dialog before confirming.
                     </p>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
-                      <span className="ds-meta ds-muted">Skip if top score &lt;</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={lowConfidenceThreshold}
-                        onChange={(e) => setLowConfidenceThreshold(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-                        style={{ width: 60, fontFamily: "var(--font-mono)", fontSize: 13, padding: "0.15rem 0.3rem", border: "2px solid var(--foreground)" }}
-                      />
-                      <span className="ds-meta ds-muted">— live count shown in dialog</span>
-                    </div>
                   </div>
                 </label>
               </div>

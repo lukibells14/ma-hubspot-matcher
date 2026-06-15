@@ -192,11 +192,11 @@ export function MatchViewer({
           <div className="ds-meta ds-muted">Use UP/DOWN then Enter</div>
         </div>
 
-        {/* Mode toggle + search input + autofill toggle */}
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.6rem", flexWrap: "wrap" }}>
+        {/* Mode toggle row + autofill toggle (right-aligned, hubspot only) */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "0.4rem" }}>
           <div style={{ display: "flex", border: "2px solid var(--foreground)", flexShrink: 0 }}>
             <button
-              onClick={() => setSearchMode("candidates")}
+              onClick={() => { setSearchMode("candidates"); setQuery(""); }}
               style={{
                 padding: "0.25rem 0.65rem",
                 fontSize: "0.72rem",
@@ -229,31 +229,36 @@ export function MatchViewer({
               HUBSPOT SEARCH
             </button>
           </div>
+          <div style={{ flex: 1 }} />
+          {isHubMode && (
+            <button
+              onClick={handleToggleAutoFill}
+              title="Auto-fill search with first word of M&A name"
+              style={{
+                padding: "0.25rem 0.65rem",
+                fontSize: "0.72rem",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 700,
+                letterSpacing: "0.03em",
+                cursor: "pointer",
+                border: "2px solid var(--foreground)",
+                background: autoFill ? "var(--foreground)" : "var(--background)",
+                color: autoFill ? "var(--background)" : "var(--foreground)",
+                flexShrink: 0,
+              }}
+            >
+              AUTO-FILL {autoFill ? "ON" : "OFF"}
+            </button>
+          )}
+        </div>
 
+        {/* Search / filter input */}
+        <div style={{ marginBottom: "0.6rem" }}>
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={isHubMode ? "Search by company name…" : "Filter by company name…"}
           />
-          <button
-            onClick={handleToggleAutoFill}
-            title="Auto-fill search with first word of M&A name"
-            style={{
-              marginLeft: "auto",
-              padding: "0.25rem 0.65rem",
-              fontSize: "0.72rem",
-              fontFamily: "var(--font-mono)",
-              fontWeight: 700,
-              letterSpacing: "0.03em",
-              cursor: "pointer",
-              border: "2px solid var(--foreground)",
-              background: autoFill ? "var(--foreground)" : "var(--background)",
-              color: autoFill ? "var(--background)" : "var(--foreground)",
-              flexShrink: 0,
-            }}
-          >
-            AUTO-FILL {autoFill ? "ON" : "OFF"}
-          </button>
         </div>
 
         {/* Count / status line */}
