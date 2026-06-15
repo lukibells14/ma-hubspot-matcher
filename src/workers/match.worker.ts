@@ -5,6 +5,7 @@ import {
   makeAcronym,
   extractTokens,
   generateSuffixVariants,
+  extractDbaVariants,
   diceSimilarity,
   looksLikeAcronym,
   acronymPunctKey,
@@ -39,6 +40,7 @@ let coreNameIndex = new Map<string, number[]>(); // core -> hubIndexes
 let acronymIndex = new Map<string, number[]>();  // acronym -> hubIndexes
 let tokenIndex = new Map<string, number[]>();    // token -> hubIndexes
 let acrPunctIndex = new Map<string, number[]>();
+let dbaIndex = new Map<string, number[]>();      // dba variant core -> hubIndexes
 
 let hubCore: string[] = [];
 let hubAcr: string[] = [];
@@ -76,6 +78,7 @@ function buildIndexes(rows: RowObject[], map: ColumnMapping) {
   acronymIndex = new Map();
   tokenIndex = new Map();
   acrPunctIndex = new Map();
+  dbaIndex = new Map();
 
   hubCore = new Array(rows.length);
   hubAcr = new Array(rows.length);
@@ -110,6 +113,13 @@ function buildIndexes(rows: RowObject[], map: ColumnMapping) {
 
     const toks = extractTokens(name);
     for (const t of toks) pushToken(t, i);
+
+    // DBA: index both sides of "dba" separately
+    const dbaVariants = extractDbaVariants(name);
+    for (const dv of dbaVariants) {
+      const dvCore = coreName(dv);
+      if (dvCore) pushIndex(dbaIndex, dvCore, i);
+    }
 
     if (i % 2000 === 0) (self as any).postMessage({ type: "INDEX_PROGRESS", done: i, total: rows.length } satisfies WorkerOut);
   }
@@ -174,6 +184,19 @@ function getCandidatesFor(maRow: RowObject, maxCandidates = 100): Candidate[] {
     if (hits?.length) hits.forEach(idx => addCandidate(bag, idx, v.foundBy));
   }
 
+  // B2) DBA: match MA name against dba-split HubSpot entries, and vice versa
+  const maDbaVariants = extractDbaVariants(maName);
+  for (const dv of maDbaVariants) {
+    const k = coreName(dv);
+    const hits = coreNameIndex.get(k);
+    if (hits?.length) hits.forEach(idx => addCandidate(bag, idx, "dba_variant"));
+  }
+  const maCore = coreName(maName);
+  if (maCore) {
+    const hits = dbaIndex.get(maCore);
+    if (hits?.length) hits.forEach(idx => addCandidate(bag, idx, "dba_variant"));
+  }
+
   // C) Acronym matching
   const maAcr = makeAcronym(maName);
 if (maAcr) {
@@ -210,7 +233,7 @@ if (maAcr) {
   for (const idx of pool) addCandidate(bag, idx, "token_block");
 
   // Score (fuzzy) in reduced pool
-  const maCore = coreName(maName);
+  const maCoreForScoring = coreName(maName);
 
   const scored: Candidate[] = [];
   for (const [idx, meta] of bag.entries()) {
@@ -219,11 +242,11 @@ if (maAcr) {
     const hubName = String(HUB[idx]?.[mapping.hubName] ?? "");
 
     // base similarity on core name
-    const sim = diceSimilarity(maCore, hubCore[idx] ?? "");
+    const sim = diceSimilarity(maCoreForScoring, hubCore[idx] ?? "");
     score = Math.round(sim * 90);
 
     // exact core name → 100
-    if (maCore && hubCore[idx] && maCore === hubCore[idx]) score = 100;
+    if (maCoreForScoring && hubCore[idx] && maCoreForScoring === hubCore[idx]) score = 100;
 
     // boost if domain exact
     if (maDom && hubDomain[idx] && maDom === hubDomain[idx]) score = 100;
@@ -297,6 +320,14 @@ function hasAnyCandidates(row: RowObject): boolean {
   for (const t of toks) {
     if (tokenIndex.has(t)) return true;
   }
+
+  const maDbaVariants = extractDbaVariants(maName);
+  for (const dv of maDbaVariants) {
+    const k = coreName(dv);
+    if (k && coreNameIndex.has(k)) return true;
+  }
+  const maCoreForDba = coreName(maName);
+  if (maCoreForDba && dbaIndex.has(maCoreForDba)) return true;
 
   return false;
 }

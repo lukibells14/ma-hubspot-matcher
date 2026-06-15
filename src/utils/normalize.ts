@@ -117,9 +117,10 @@ export function acronymPunctKey(name: string): string {
  * - try raw core
  * - try removing suffixes
  * - try adding common suffixes if none exist
+ * - try and/& swap, The prefix strip, trailing-s strip
  * Note: display uses original HubSpot name regardless.
  */
-export function generateSuffixVariants(name: any): { variant: string; foundBy: "exact_core" | "suffix_variant_removed" | "suffix_variant_added" }[] {
+export function generateSuffixVariants(name: any): { variant: string; foundBy: "exact_core" | "suffix_variant_removed" | "suffix_variant_added" | "and_ampersand_variant" | "the_prefix_variant" | "trailing_s_variant" }[] {
   const raw = normalizeNameRaw(name);
   const core = removeSuffixTokens(raw);
 
@@ -136,8 +137,51 @@ export function generateSuffixVariants(name: any): { variant: string; foundBy: "
     out.push({ variant: `${core} corp`, foundBy: "suffix_variant_added" });
   }
 
+  // and <-> & swap: normalizeNameRaw turns & into space, so we normalize "and" out too
+  const andSwapped = raw.replace(/\band\b/g, " ").replace(/\s+/g, " ").trim();
+  if (andSwapped !== raw) out.push({ variant: andSwapped, foundBy: "and_ampersand_variant" });
+  const andSwappedCore = removeSuffixTokens(andSwapped);
+  if (andSwappedCore && andSwappedCore !== andSwapped) out.push({ variant: andSwappedCore, foundBy: "and_ampersand_variant" });
+
+  // Strip leading "the"
+  const withoutThe = raw.replace(/^the\s+/, "").trim();
+  if (withoutThe !== raw) {
+    out.push({ variant: withoutThe, foundBy: "the_prefix_variant" });
+    const withoutTheCore = removeSuffixTokens(withoutThe);
+    if (withoutTheCore && withoutTheCore !== withoutThe) out.push({ variant: withoutTheCore, foundBy: "the_prefix_variant" });
+  }
+
+  // Strip leading "the" AND swap and/&
+  const withoutTheAndSwapped = withoutThe.replace(/\band\b/g, " ").replace(/\s+/g, " ").trim();
+  if (withoutTheAndSwapped !== withoutThe && withoutTheAndSwapped !== raw) {
+    out.push({ variant: withoutTheAndSwapped, foundBy: "the_prefix_variant" });
+  }
+
+  // Trailing-s strip: remove trailing "s" from each non-suffix token
+  const trailingSStripped = raw
+    .split(" ")
+    .map(t => (SUFFIXES.includes(t) ? t : t.replace(/s$/, "")))
+    .join(" ")
+    .trim();
+  if (trailingSStripped !== raw) {
+    out.push({ variant: trailingSStripped, foundBy: "trailing_s_variant" });
+    const trailingSCore = removeSuffixTokens(trailingSStripped);
+    if (trailingSCore && trailingSCore !== trailingSStripped) out.push({ variant: trailingSCore, foundBy: "trailing_s_variant" });
+  }
+
   const seen = new Set<string>();
-  return out.filter(v => (seen.has(v.variant) ? false : (seen.add(v.variant), true)));
+  return out.filter(v => v.variant && (seen.has(v.variant) ? false : (seen.add(v.variant), true)));
+}
+
+/** Split a name on "dba" and return the parts before and after (normalized). */
+export function extractDbaVariants(name: any): string[] {
+  const raw = normalizeNameRaw(name);
+  const idx = raw.split(" ").indexOf("dba");
+  if (idx === -1) return [];
+  const tokens = raw.split(" ");
+  const before = tokens.slice(0, idx).join(" ").trim();
+  const after = tokens.slice(idx + 1).join(" ").trim();
+  return [before, after].filter(Boolean);
 }
 
 export function diceSimilarity(a: string, b: string): number {

@@ -26,7 +26,11 @@ export type FoundBy =
   | "acronym_punct"
   | "batch_exact"
   | "batch_zero"
-  | "hubspot_search";
+  | "hubspot_search"
+  | "and_ampersand_variant"
+  | "the_prefix_variant"
+  | "trailing_s_variant"
+  | "dba_variant";
 
 export type Candidate = {
   hubIndex: number;

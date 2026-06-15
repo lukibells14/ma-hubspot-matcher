@@ -17,6 +17,7 @@ import { ProgressHeader } from "./components/ProgressHeader";
 import { FieldSelectorDropdown } from "./components/FieldSelectorDropdown";
 import { MatchViewer } from "./components/MatchViewer";
 import { ResultsTable } from "./components/ResultsTable";
+import { MatchingInfoModal } from "./components/MatchingInfoModal";
 import { Button } from "./components/ui";
 
 type WorkerOut =
@@ -59,6 +60,7 @@ export default function App() {
   const [selections, setSelections] = useState<SelectionRow[]>([]);
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [infoModalOpen, setInfoModalOpen] = useState(false);
   const [hubspotSearchResults, setHubspotSearchResults] = useState<CandidateDisplay[]>([]);
   const [hubspotSearchOverflow, setHubspotSearchOverflow] = useState(false);
 
@@ -461,8 +463,27 @@ export default function App() {
         onClose={() => setModalOpen(false)}
       />
 
+      <MatchingInfoModal
+        open={infoModalOpen}
+        onClose={() => setInfoModalOpen(false)}
+      />
+
       <section className="ds-hero">
-        <div className="ds-kicker">M&A to HubSpot</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div className="ds-kicker">M&A to HubSpot</div>
+          <button
+            onClick={() => setInfoModalOpen(true)}
+            title="How matching works"
+            style={{
+              background: "none", border: "2px solid var(--foreground)",
+              cursor: "pointer", padding: "0.2rem 0.6rem",
+              fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 700,
+              letterSpacing: "0.05em",
+            }}
+          >
+            ? HOW MATCHING WORKS
+          </button>
+        </div>
         <h1 className="ds-display">MATCHER</h1>
         <p className="ds-lead">
           Single page workflow for high-volume CSV matching with cached HubSpot datasets, keyboard-first candidate selection,

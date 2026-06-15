@@ -49,7 +49,8 @@ src/
     ├── ExportModal.tsx            # Export dialog with custom filenames
     ├── SummaryModal.tsx           # File preview (columns, row count, sample data)
     ├── BatchReviewModal.tsx       # Batch auto-match preview and confirmation dialog
-    └── CustomColumnBuilder.tsx    # IF/ELSE computed column builder with live preview
+    ├── CustomColumnBuilder.tsx    # IF/ELSE computed column builder with live preview
+    └── MatchingInfoModal.tsx      # Info dialog listing all matching strategies with examples
 ```
 
 ---
@@ -81,12 +82,18 @@ Runs in a background thread to avoid blocking the UI. Uses multiple matching str
 | `exact_core` | Normalized company name matched exactly (score: 100) |
 | `suffix_variant_removed` | Match after stripping Inc/LLC/Corp/Ltd |
 | `suffix_variant_added` | Match after appending a common suffix |
+| `and_ampersand_variant` | Treats `&` and `and` as equivalent (e.g. "Smith & Jones" ↔ "Smith and Jones") |
+| `the_prefix_variant` | Ignores a leading "The" on either side (e.g. "The Harbor Trust" ↔ "Harbor Trust") |
+| `trailing_s_variant` | Strips a trailing "s" from name tokens (e.g. "Jacksons" ↔ "Jackson") |
+| `dba_variant` | Matches either side of a "dba" clause (e.g. MA: "Morning Fresh" ↔ HubSpot: "Sunrise Bakery dba Morning Fresh") |
 | `acronym_match` | Acronym lookup (e.g. "ABC Corp" → "ABC") |
-| `acronym_punct` | Acronym + punctuation-stripped key |
+| `acronym_punct` | Acronym + punctuation-stripped key (e.g. "A.T.S." ↔ "ATS") |
 | `token_block` | Top 6 longest tokens unioned, then fuzzy scored |
 | `fuzzy_scored` | Dice bigram similarity on remaining candidates |
 
-Builds 5 lookup indexes at startup: domain, core name, acronym, token, acronym+punct.
+All variants can combine — e.g. "The Baker & Reeds LLC" can match "Baker and Reed Corp" via `the_prefix_variant` + `and_ampersand_variant` + `trailing_s_variant` + `suffix_variant_removed`.
+
+Builds 6 lookup indexes at startup: domain, core name, acronym, token, acronym+punct, and DBA variants.
 
 Files: `src/workers/match.worker.ts`, `src/utils/normalize.ts`
 
@@ -151,12 +158,26 @@ File: `src/components/ResultsTable.tsx`
 
 Files: `src/utils/export.ts`, `src/components/ExportModal.tsx`
 
-### 12. File Preview Modal
+### 12. Candidate Search Mode Toggle (Sticky)
+The MatchViewer has two modes toggled by a button pair:
+- **CANDIDATES** — shows pre-scored candidates from the worker pipeline
+- **HUBSPOT SEARCH** — full-text search across the entire HubSpot dataset by company name (debounced 150ms)
+
+The mode is **sticky**: when a selection is made, the mode used is remembered via `stickyModeRef`. The next M&A row opens in the same mode. Defaults to CANDIDATES on first load.
+
+File: `src/components/MatchViewer.tsx`
+
+### 13. Matching Info Dialog
+A **"? HOW MATCHING WORKS"** button in the top-right of the hero header opens a scrollable reference dialog listing all 14 matching strategies, each with a description and 2–3 examples (M&A Name / HubSpot Candidate / Why It Matched).
+
+File: `src/components/MatchingInfoModal.tsx`
+
+### 14. File Preview Modal
 Shows column list, row count, and first 5 rows when a CSV is uploaded, so users can verify the file before proceeding.
 
 File: `src/components/SummaryModal.tsx`
 
-### 13. Resizable Modals
+### 15. Resizable Modals
 All modals (ExportModal, SummaryModal, BatchReviewModal, CustomColumnBuilder) have a drag handle at the bottom-right corner. Uses the shared `useResizable` hook.
 
 - Dragging outside the modal after resize does **not** trigger cancel — suppressed via a one-time capture-phase click listener
@@ -170,6 +191,8 @@ All modals (ExportModal, SummaryModal, BatchReviewModal, CustomColumnBuilder) ha
 ColumnMapping          // maName, maDomain, hubName, hubDomain, hubUniqueCode
 DisplayFieldSelection  // maFields[], hubFields[], showHubFoundBy
 FoundBy                // "domain_exact" | "exact_core" | "suffix_variant_*" | "acronym_*"
+                       // | "and_ampersand_variant" | "the_prefix_variant"
+                       // | "trailing_s_variant" | "dba_variant"
                        // | "token_block" | "fuzzy_scored" | "batch_exact"
 Candidate              // hubIndex, score (0–100), foundBy[]
 CandidateDisplay       // extends Candidate with hubRow (may include synthetic custom col keys)
