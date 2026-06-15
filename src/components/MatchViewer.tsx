@@ -48,7 +48,7 @@ export function MatchViewer({
     if (autoFillRef.current && stickyModeRef.current === "hubspot") {
       const maName = String(maRow?.[maFields[0]] ?? "");
       const firstWord = getFirstMeaningfulWord(maName);
-      setQuery(firstWord);
+      setQuery(firstWord ? firstWord + " " : "");
       if (firstWord) onHubspotSearch(firstWord);
     } else {
       setQuery("");
@@ -151,7 +151,7 @@ export function MatchViewer({
     if (autoFillRef.current && !query.trim()) {
       const maName = String(maRow?.[maFields[0]] ?? "");
       const firstWord = getFirstMeaningfulWord(maName);
-      setQuery(firstWord);
+      setQuery(firstWord ? firstWord + " " : "");
       onHubspotSearch(firstWord);
     } else {
       onHubspotSearch(query.trim());
@@ -165,7 +165,7 @@ export function MatchViewer({
     if (next && searchMode === "hubspot" && !query.trim()) {
       const maName = String(maRow?.[maFields[0]] ?? "");
       const firstWord = getFirstMeaningfulWord(maName);
-      setQuery(firstWord);
+      setQuery(firstWord ? firstWord + " " : "");
       if (firstWord) onHubspotSearch(firstWord);
     }
   };

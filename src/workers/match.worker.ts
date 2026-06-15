@@ -31,7 +31,7 @@ type WorkerOut =
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
   | { type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
-  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number }[] }
+  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number; hubResultCount: number }[] }
   | { type: "ERROR"; message: string };
 
 let HUB: RowObject[] = [];
@@ -399,18 +399,21 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
 
     if (msg.type === "SCAN_LOW_CONFIDENCE") {
       if (!mapping) return;
-      const results: { maIndex: number; topScore: number }[] = [];
+      const results: { maIndex: number; topScore: number; hubResultCount: number }[] = [];
       for (let i = 0; i < MA.length; i++) {
         const row = MA[i];
         if (!row) continue;
         const maName = String(row[mapping.maName] ?? "");
         const firstWord = getFirstMeaningfulWord(maName);
         if (!firstWord) continue;
-        const hasResults = HUB_SEARCH_INDEX.some(r => r.values.some(v => v.includes(firstWord)));
-        if (hasResults) continue;
+        let hubResultCount = 0;
+        for (const r of HUB_SEARCH_INDEX) {
+          if (r.values.some(v => v.includes(firstWord))) hubResultCount++;
+        }
+        if (hubResultCount > 0) continue;
         const top = getCandidatesFor(row, 1);
         const topScore = top[0]?.score ?? 0;
-        results.push({ maIndex: i, topScore });
+        results.push({ maIndex: i, topScore, hubResultCount });
       }
       (self as any).postMessage({ type: "LOW_CONFIDENCE_DONE", candidates: results } satisfies WorkerOut);
       return;

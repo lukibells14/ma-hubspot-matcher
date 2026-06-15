@@ -70,7 +70,7 @@ export function BatchReviewModal({
   isFirstStep?: boolean;
   isLastStep?: boolean;
   zeroCandidateCount?: number | null;
-  lowConfidenceData?: { maIndex: number; topScore: number }[];
+  lowConfidenceData?: { maIndex: number; topScore: number; hubResultCount: number }[];
   lowConfidenceThreshold?: number;
   onThresholdChange?: (v: number) => void;
   maRows?: RowObject[];
@@ -350,7 +350,7 @@ export function BatchReviewModal({
               </div>
             </div>
 
-            <div className="ds-table-wrap" style={{ flex: 1, minHeight: 120, overflowY: "auto" }}>
+            <div className="ds-table-wrap" style={{ flex: 1, minHeight: 120, overflowY: "auto", paddingRight: "4px" }}>
               {lowConfidenceData.length === 0 ? (
                 <div className="ds-card-muted" style={{ padding: "2rem", textAlign: "center" }}>
                   <span className="ds-meta ds-muted">Scanning records…</span>
@@ -365,6 +365,7 @@ export function BatchReviewModal({
                     <tr>
                       <th style={thStyle}>M&A Name</th>
                       <th style={{ ...thStyle, textAlign: "right" }}>Top Score</th>
+                      <th style={{ ...thStyle, textAlign: "right" }}>HubSpot Results</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -376,6 +377,7 @@ export function BatchReviewModal({
                           <tr key={c.maIndex}>
                             <td style={tdStyle} title={name}>{name}</td>
                             <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{c.topScore}</td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{c.hubResultCount}</td>
                           </tr>
                         );
                       })}

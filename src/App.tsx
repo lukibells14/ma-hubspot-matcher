@@ -28,7 +28,7 @@ type WorkerOut =
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
   | { type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
-  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number }[] }
+  | { type: "LOW_CONFIDENCE_DONE"; candidates: { maIndex: number; topScore: number; hubResultCount: number }[] }
   | { type: "ERROR"; message: string };
 
 export default function App() {
@@ -88,7 +88,7 @@ export default function App() {
   const [enableSkipZero, setEnableSkipZero] = useState(false);
   const [enableSkipLowConfidence, setEnableSkipLowConfidence] = useState(false);
   const [lowConfidenceThreshold, setLowConfidenceThreshold] = useState(60);
-  const [lowConfidenceData, setLowConfidenceData] = useState<{ maIndex: number; topScore: number }[]>([]);
+  const [lowConfidenceData, setLowConfidenceData] = useState<{ maIndex: number; topScore: number; hubResultCount: number }[]>([]);
   const [stagedLowConfidenceIndexes, setStagedLowConfidenceIndexes] = useState<number[]>([]);
   const [batchReviewOpen, setBatchReviewOpen] = useState(false);
   const [batchResult, setBatchResult] = useState<BatchMatchResult | null>(null);
