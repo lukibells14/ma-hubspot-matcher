@@ -50,7 +50,8 @@ src/
     ├── SummaryModal.tsx           # File preview (columns, row count, sample data)
     ├── BatchReviewModal.tsx       # Batch auto-match preview and confirmation dialog
     ├── CustomColumnBuilder.tsx    # IF/ELSE computed column builder with live preview
-    └── MatchingInfoModal.tsx      # Info dialog listing all matching strategies with examples
+    ├── MatchingInfoModal.tsx      # Info dialog listing all matching strategies with examples
+    └── LoadingOverlay.tsx         # Full-screen blocking overlay for all async loading phases
 ```
 
 ---
@@ -127,8 +128,23 @@ Files: `src/utils/batchMatch.ts`, `src/components/BatchReviewModal.tsx`
 ### 6. Prescreen Queue
 Before review starts, rows are bucketed:
 - **100% matches** (domain or core name exact) — reviewed first
-- **Rest** — queued after
+- **High-score** (suffix/acronym-punct variant hits) — reviewed second
+- **Rest** — sorted descending by top candidate score, reviewed last
 - Rows already confirmed by batch auto-match are excluded from the queue
+
+### 6a. Loading Overlays
+A full-screen `LoadingOverlay` (white, blurred backdrop, 2px black card) blocks all interaction during async operations. Four phases:
+
+| Phase | Trigger | UI |
+|---|---|---|
+| `csv` | File selected/dropped for M&A or HubSpot | Spinner + filename |
+| `indexing` | `INIT` sent → `READY` received | Live progress bar driven by `INDEX_PROGRESS` |
+| `scanning` | `READY` received with batch scans pending | Spinner + enabled scan labels |
+| `prescreen` | `PRESCREEN` sent → `PRESCREEN_DONE` received | Live progress bar driven by `PRESCREEN_PROGRESS` |
+
+Keyboard shortcuts (arrow keys) are also blocked while any overlay is active via `loadingOverlayRef`.
+
+File: `src/components/LoadingOverlay.tsx`
 
 ### 7. Keyboard-First Review UI
 | Key | Action |
@@ -257,11 +273,12 @@ Key derived state:
 
 **Worker → Main:**
 ```typescript
-{ type: "INDEX_PROGRESS";   done, total }
-{ type: "READY";            hubCount, maCount }
-{ type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
-{ type: "CANDIDATES";       maIndex, candidates }
-{ type: "PRESCREEN_DONE";   hundredPct, rest }
+{ type: "INDEX_PROGRESS";    done, total }        // every 2000 rows during INIT
+{ type: "PRESCREEN_PROGRESS"; done, total }      // every 100 rows during rest-bucket scoring
+{ type: "READY";             hubCount, maCount }
+{ type: "BATCH_MATCH_DONE";  result: BatchMatchResult }
+{ type: "CANDIDATES";        maIndex, candidates }
+{ type: "PRESCREEN_DONE";    hundredPct, highScore, rest }
 { type: "ERROR";            message }
 ```
 

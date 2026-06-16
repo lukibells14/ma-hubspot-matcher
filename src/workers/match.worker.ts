@@ -27,6 +27,7 @@ type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: Candidate[] }
+  | { type: "PRESCREEN_PROGRESS"; done: number; total: number }
   | { type: "PRESCREEN_DONE"; hundredPct: number[]; highScore: number[]; rest: number[] }
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
@@ -457,10 +458,15 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
       }
 
       // Sort rest by top candidate score descending so highest-confidence fuzzy matches are reviewed first
-      const restWithScores = rest.map((i) => {
-        const top = getCandidatesFor(MA[i]!, 1);
-        return { i, score: top[0]?.score ?? 0 };
-      });
+      const restWithScores: { i: number; score: number }[] = [];
+      (self as any).postMessage({ type: "PRESCREEN_PROGRESS", done: 0, total: rest.length } satisfies WorkerOut);
+      for (let j = 0; j < rest.length; j++) {
+        const top = getCandidatesFor(MA[rest[j]]!, 1);
+        restWithScores.push({ i: rest[j], score: top[0]?.score ?? 0 });
+        if (j % 100 === 99 || j === rest.length - 1) {
+          (self as any).postMessage({ type: "PRESCREEN_PROGRESS", done: j + 1, total: rest.length } satisfies WorkerOut);
+        }
+      }
       restWithScores.sort((a, b) => b.score - a.score);
       const sortedRest = restWithScores.map((r) => r.i);
 

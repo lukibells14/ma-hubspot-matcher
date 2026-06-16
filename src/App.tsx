@@ -18,12 +18,15 @@ import { FieldSelectorDropdown } from "./components/FieldSelectorDropdown";
 import { MatchViewer } from "./components/MatchViewer";
 import { ResultsTable } from "./components/ResultsTable";
 import { MatchingInfoModal } from "./components/MatchingInfoModal";
+import { LoadingOverlay } from "./components/LoadingOverlay";
+import type { OverlayState } from "./components/LoadingOverlay";
 import { Button } from "./components/ui";
 
 type WorkerOut =
   | { type: "INDEX_PROGRESS"; done: number; total: number }
   | { type: "READY"; hubCount: number; maCount: number }
   | { type: "CANDIDATES"; maIndex: number; candidates: { hubIndex: number; score: number; foundBy: any[] }[] }
+  | { type: "PRESCREEN_PROGRESS"; done: number; total: number }
   | { type: "PRESCREEN_DONE"; hundredPct: number[]; highScore: number[]; rest: number[] }
   | { type: "BATCH_MATCH_DONE"; result: BatchMatchResult }
   | { type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[]; overflow: boolean }
@@ -98,9 +101,20 @@ export default function App() {
   const [stagedExactSelections, setStagedExactSelections] = useState<SelectionRow[]>([]);
   const batchConfirmedSetRef = useRef<Set<number>>(new Set());
 
+  const [loadingOverlay, setLoadingOverlay] = useState<OverlayState | null>(null);
+  const loadingOverlayRef = useRef<OverlayState | null>(null);
+  useEffect(() => { loadingOverlayRef.current = loadingOverlay; }, [loadingOverlay]);
+
   const workerRef = useRef<Worker | null>(null);
   const maxCandidatesRef = useRef(maxCandidates);
   useEffect(() => { maxCandidatesRef.current = maxCandidates; }, [maxCandidates]);
+
+  // Track which batch scans are still pending so we know when to clear the scanning overlay
+  const pendingBatchScansRef = useRef(0);
+  // Distinguish the two READY messages (after INIT vs after START)
+  const firstReadySeenRef = useRef(false);
+  // Labels for the scanning overlay (set in startMatching before worker messages arrive)
+  const scanningLabelsRef = useRef<string[]>([]);
 
   const currentIndex = matchingQueue[currentQueuePos] ?? 0;
 
@@ -113,8 +127,19 @@ export default function App() {
       if (msg.type === "INDEX_PROGRESS") {
         setIndexProgress({ done: msg.done, total: msg.total });
         setStatus(`Indexing HubSpot... ${msg.done.toLocaleString()}/${msg.total.toLocaleString()}`);
+        setLoadingOverlay({ phase: "indexing", done: msg.done, total: msg.total });
       } else if (msg.type === "READY") {
         setStatus(`Ready. HubSpot: ${msg.hubCount.toLocaleString()} rows | M&A: ${msg.maCount.toLocaleString()} rows`);
+        if (!firstReadySeenRef.current) {
+          firstReadySeenRef.current = true;
+          if (pendingBatchScansRef.current > 0) {
+            setLoadingOverlay({ phase: "scanning", labels: scanningLabelsRef.current });
+          } else {
+            setLoadingOverlay({ phase: "prescreen", done: 0, total: 0 });
+          }
+        }
+      } else if (msg.type === "PRESCREEN_PROGRESS") {
+        setLoadingOverlay({ phase: "prescreen", done: msg.done, total: msg.total });
       } else if (msg.type === "CANDIDATES") {
         const cols = customColumnsRef.current;
         const mapped = msg.candidates
@@ -138,15 +163,22 @@ export default function App() {
         setHubspotSearchResults(results);
         setHubspotSearchOverflow(msg.overflow);
       } else if (msg.type === "BATCH_MATCH_DONE") {
+        pendingBatchScansRef.current--;
         setBatchResult(msg.result);
         setBatchModalStep("exact");
         setBatchReviewOpen(true);
         setStatus(`Auto-match scan complete. Found ${msg.result.matched.length.toLocaleString()} exact matches.`);
+        if (pendingBatchScansRef.current <= 0) setLoadingOverlay(null);
       } else if (msg.type === "ZERO_CANDIDATES_DONE") {
+        pendingBatchScansRef.current--;
         setZeroCandidateIndexes(msg.zeroIndexes);
+        if (pendingBatchScansRef.current <= 0) setLoadingOverlay(null);
       } else if (msg.type === "LOW_CONFIDENCE_DONE") {
+        pendingBatchScansRef.current--;
         setLowConfidenceData(msg.candidates);
+        if (pendingBatchScansRef.current <= 0) setLoadingOverlay(null);
       } else if (msg.type === "PRESCREEN_DONE") {
+        setLoadingOverlay(null);
         const confirmed = batchConfirmedSetRef.current;
         const queue = [...msg.hundredPct, ...msg.highScore, ...msg.rest].filter((i) => !confirmed.has(i));
         setMatchingQueue(queue);
@@ -249,6 +281,16 @@ export default function App() {
     setStage("matching");
     setStatus("Indexing HubSpot...");
 
+    // Set up overlay refs before posting messages
+    firstReadySeenRef.current = false;
+    const labels: string[] = [];
+    if (enableBatchMode) labels.push("Auto-match");
+    if (enableSkipZero) labels.push("Zero candidates");
+    if (enableSkipLowConfidence) labels.push("Low confidence");
+    scanningLabelsRef.current = labels;
+    pendingBatchScansRef.current = labels.length;
+    setLoadingOverlay({ phase: "indexing", done: 0, total: hubRows.length });
+
     workerRef.current?.postMessage({ type: "INIT", hubRows, mapping });
     workerRef.current?.postMessage({ type: "START", maRows });
 
@@ -298,6 +340,7 @@ export default function App() {
     setStagedExactSelections([]);
     setStagedLowConfidenceIndexes([]);
     setStatus("Running prescreen for manual review queue...");
+    setLoadingOverlay({ phase: "prescreen", done: 0, total: 0 });
     workerRef.current?.postMessage({ type: "PRESCREEN" });
   };
 
@@ -404,6 +447,7 @@ export default function App() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (loadingOverlayRef.current !== null) return;
       if (e.key !== "ArrowLeft") return;
       if (stage !== "matching" && stage !== "done") return;
       if (
@@ -452,6 +496,8 @@ export default function App() {
 
   return (
     <main className="ds-shell">
+      <LoadingOverlay state={loadingOverlay} />
+
       <ExportModal
         open={exportModalOpen}
         isFinished={stage === "done"}
@@ -540,7 +586,9 @@ export default function App() {
           onFile={async (file) => {
             setMaFilename(file.name);
             setStatus("Parsing M&A CSV...");
+            setLoadingOverlay({ phase: "csv", filename: file.name });
             const parsed = await parseCsvFile(file);
+            setLoadingOverlay(null);
 
             setMaRows(parsed.rows);
             setMaCols(parsed.columns);
@@ -564,7 +612,9 @@ export default function App() {
           onFile={async (file) => {
             setHubFilename(file.name);
             setStatus("Parsing HubSpot CSV... (200K+ may take time)");
+            setLoadingOverlay({ phase: "csv", filename: file.name });
             const parsed = await parseCsvFile(file);
+            setLoadingOverlay(null);
 
             setHubRows(parsed.rows);
             setHubCols(parsed.columns);
