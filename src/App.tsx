@@ -99,6 +99,7 @@ export default function App() {
   const [batchModalStep, setBatchModalStep] = useState<"exact" | "zero" | "low_confidence" | "summary">("exact");
   const [zeroCandidateIndexes, setZeroCandidateIndexes] = useState<number[] | null>(null);
   const [stagedExactSelections, setStagedExactSelections] = useState<SelectionRow[]>([]);
+  const [stagedZeroIndexes, setStagedZeroIndexes] = useState<number[]>([]);
   const batchConfirmedSetRef = useRef<Set<number>>(new Set());
 
   const [loadingOverlay, setLoadingOverlay] = useState<OverlayState | null>(null);
@@ -275,6 +276,7 @@ export default function App() {
     setBatchAutoCount(0);
     batchConfirmedSetRef.current = new Set();
     setStagedExactSelections([]);
+    setStagedZeroIndexes([]);
     setStagedLowConfidenceIndexes([]);
     setZeroCandidateIndexes(null);
     setLowConfidenceData([]);
@@ -344,7 +346,7 @@ export default function App() {
     workerRef.current?.postMessage({ type: "PRESCREEN" });
   };
 
-  const handleBatchAction = (confirmed?: BatchMatchItem[]) => {
+  const handleBatchAction = (confirmed?: BatchMatchItem[], confirmedZeroIndexes?: number[]) => {
     const currentIdx = batchSteps.indexOf(batchModalStep);
     const nextStep = batchSteps[currentIdx + 1];
 
@@ -362,17 +364,19 @@ export default function App() {
       if (nextStep) setBatchModalStep(nextStep);
       else applyBatchAndStart(exactSels, [], []);
     } else if (batchModalStep === "zero") {
+      const zeroIndexes = confirmedZeroIndexes ?? [];
+      setStagedZeroIndexes(zeroIndexes);
       if (nextStep) setBatchModalStep(nextStep);
-      else applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], []);
+      else applyBatchAndStart(stagedExactSelections, zeroIndexes, []);
     } else if (batchModalStep === "low_confidence") {
       const lowConfIndexes = lowConfidenceData
         .filter((c) => c.topScore < lowConfidenceThreshold)
         .map((c) => c.maIndex);
       setStagedLowConfidenceIndexes(lowConfIndexes);
       if (nextStep) setBatchModalStep(nextStep);
-      else applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], lowConfIndexes);
+      else applyBatchAndStart(stagedExactSelections, stagedZeroIndexes, lowConfIndexes);
     } else if (batchModalStep === "summary") {
-      applyBatchAndStart(stagedExactSelections, zeroCandidateIndexes ?? [], stagedLowConfidenceIndexes);
+      applyBatchAndStart(stagedExactSelections, stagedZeroIndexes, stagedLowConfidenceIndexes);
     }
   };
 
@@ -388,6 +392,7 @@ export default function App() {
     setZeroCandidateIndexes(null);
     setLowConfidenceData([]);
     setStagedExactSelections([]);
+    setStagedZeroIndexes([]);
     setStagedLowConfidenceIndexes([]);
     setSelections([]);
     setMatchingQueue([]);
@@ -525,13 +530,15 @@ export default function App() {
         step={batchModalStep}
         isFirstStep={batchSteps.indexOf(batchModalStep) === 0}
         isLastStep={batchSteps.indexOf(batchModalStep) === batchSteps.length - 1}
-        zeroCandidateCount={zeroCandidateIndexes?.length ?? null}
+        zeroCandidateIndexes={zeroCandidateIndexes}
         lowConfidenceData={lowConfidenceData}
         lowConfidenceThreshold={lowConfidenceThreshold}
         onThresholdChange={setLowConfidenceThreshold}
         maRows={maRows}
         maNameCol={mapping.maName}
+        maDomainCol={mapping.maDomain ?? ""}
         confirmedExactCount={stagedExactSelections.length}
+        confirmedZeroCount={stagedZeroIndexes.length}
         totalMaCount={maRows.length}
         onAction={handleBatchAction}
         onBack={handleBatchBack}
@@ -770,10 +777,11 @@ export default function App() {
                     style={{ marginTop: "0.15rem", flexShrink: 0 }}
                   />
                   <div>
-                    <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto skip zero-candidate records</span>
+                    <span style={{ fontFamily: "var(--font-body)", fontWeight: 600 }}>Auto skip records</span>
                     <p className="ds-meta ds-muted" style={{ marginTop: "0.2rem", marginBottom: 0 }}>
-                      Automatically marks records with no HubSpot candidates as No Match, removing them from
-                      manual review. Scans the index before starting — no scoring required.
+                      Automatically marks records as No Match when both the Candidates tab returns zero results
+                      and every meaningful word from the company name returns zero results in HubSpot Search.
+                      If any word gets a hit, the record proceeds to manual review.
                     </p>
                     {zeroCandidatePreviewCount !== null && (
                       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>

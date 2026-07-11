@@ -32,7 +32,7 @@ src/
 ├── utils/
 │   ├── csv.ts                     # CSV parsing (PapaParse, auto-delimiter)
 │   ├── storage.ts                 # IndexedDB caching for HubSpot (idb-keyval)
-│   ├── normalize.ts               # String normalization + matching algorithms
+│   ├── normalize.ts               # String normalization + matching algorithms + ZERO_CANDIDATE_WORD_EXCLUSIONS
 │   ├── export.ts                  # XLSX/CSV export (xlsx library)
 │   ├── batchMatch.ts              # Exact-name batch matching logic
 │   └── customColumns.ts           # Custom column rule evaluation
@@ -109,9 +109,14 @@ Three optional pre-steps before manual review, enabled via the **Batch Options**
 - Preview count shown on ready screen
 
 **Auto skip zero-candidate records (`batch_zero`)**
-- Marks records with zero index hits as No Match before manual review
-- No scoring required — index lookup only
-- Preview count shown on ready screen
+- Marks records as No Match only when **both** conditions are true:
+  1. The matching pipeline (index lookups) returns **0 candidates** in the Candidates tab
+  2. Every meaningful word from the M&A company name, searched individually in HubSpot, also returns **0 results**
+- If any single meaningful word gets ≥ 1 HubSpot result, the record is kept for manual review
+- "Meaningful words" are extracted by stripping punctuation/special characters (so `"Doctor-Med"` → `["doctor", "med"]`), then dropping words shorter than 3 characters and words in `ZERO_CANDIDATE_WORD_EXCLUSIONS`
+- **Exclusion word list**: `src/utils/normalize.ts` → `ZERO_CANDIDATE_WORD_EXCLUSIONS` (exported `Set` at the top of the file, easy to extend — all lowercase, one word per line)
+  - Default exclusions: articles (`the`, `a`, `an`), prepositions (`of`, `and`, `for`), corporate entity types (`inc`, `llc`, `corp`, `corporation`, `ltd`, `limited`, `co`, `company`, `lp`, `plc`, `llp`, `pllc`, `pc`, `pa`), generic descriptors (`group`, `holdings`, `partners`, `associates`, `organization`, `org`)
+- No scoring required — index lookup + HubSpot substring search only
 
 **Auto skip low-confidence records (`batch_low_confidence`)**
 - Marks records as No Match when **both** conditions are true:
@@ -264,21 +269,28 @@ Key derived state:
 
 **Main → Worker:**
 ```typescript
-{ type: "INIT";           hubRows, mapping }
-{ type: "START";          maRows }
-{ type: "BATCH_MATCH" }   // triggers exact-name batch scan
-{ type: "GET_CANDIDATES"; maIndex, maxCandidates }
+{ type: "INIT";                  hubRows, mapping }
+{ type: "START";                 maRows }
+{ type: "BATCH_MATCH" }          // exact-name batch scan
+{ type: "SCAN_ZERO_CANDIDATES" } // zero-candidate + per-word HubSpot check
+{ type: "SCAN_LOW_CONFIDENCE" }  // low-score + first-word HubSpot check
+{ type: "GET_CANDIDATES";        maIndex, maxCandidates }
 { type: "PRESCREEN" }
+{ type: "HUBSPOT_SEARCH";        query, maxResults }
 ```
 
 **Worker → Main:**
 ```typescript
-{ type: "INDEX_PROGRESS";    done, total }        // every 2000 rows during INIT
-{ type: "PRESCREEN_PROGRESS"; done, total }      // every 100 rows during rest-bucket scoring
-{ type: "READY";             hubCount, maCount }
-{ type: "BATCH_MATCH_DONE";  result: BatchMatchResult }
-{ type: "CANDIDATES";        maIndex, candidates }
-{ type: "PRESCREEN_DONE";    hundredPct, highScore, rest }
+{ type: "INDEX_PROGRESS";     done, total }        // every 2000 rows during INIT
+{ type: "PRESCREEN_PROGRESS"; done, total }       // every 100 rows during rest-bucket scoring
+{ type: "READY";              hubCount, maCount }
+{ type: "BATCH_MATCH_DONE";   result: BatchMatchResult }
+{ type: "ZERO_CANDIDATES_DONE"; zeroIndexes: number[] }
+{ type: "LOW_CONFIDENCE_DONE";  candidates: { maIndex, topScore, hubResultCount }[] }
+{ type: "HUBSPOT_SEARCH_RESULTS"; hubIndexes: number[], overflow: boolean }
+{ type: "CANDIDATES";         maIndex, candidates }
+{ type: "PRESCREEN_DONE";     hundredPct, highScore, rest }
+{ type: "ERROR";              message }
 { type: "ERROR";            message }
 ```
 

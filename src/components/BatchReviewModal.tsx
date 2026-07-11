@@ -47,13 +47,15 @@ export function BatchReviewModal({
   step = "exact",
   isFirstStep = true,
   isLastStep = true,
-  zeroCandidateCount = null,
+  zeroCandidateIndexes = null,
   lowConfidenceData = [],
   lowConfidenceThreshold = 60,
   onThresholdChange,
   maRows = [],
   maNameCol = "",
+  maDomainCol = "",
   confirmedExactCount = 0,
+  confirmedZeroCount = 0,
   totalMaCount = 0,
   onAction,
   onBack,
@@ -69,21 +71,26 @@ export function BatchReviewModal({
   step?: "exact" | "zero" | "low_confidence" | "summary";
   isFirstStep?: boolean;
   isLastStep?: boolean;
-  zeroCandidateCount?: number | null;
+  zeroCandidateIndexes?: number[] | null;
   lowConfidenceData?: { maIndex: number; topScore: number; hubResultCount: number }[];
   lowConfidenceThreshold?: number;
   onThresholdChange?: (v: number) => void;
   maRows?: RowObject[];
   maNameCol?: string;
+  maDomainCol?: string;
   confirmedExactCount?: number;
+  confirmedZeroCount?: number;
   totalMaCount?: number;
-  onAction: (confirmed?: BatchMatchItem[]) => void;
+  onAction: (confirmed?: BatchMatchItem[], confirmedZeroIndexes?: number[]) => void;
   onBack: () => void;
   onCancel: () => void;
 }) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [zeroChecked, setZeroChecked] = useState<Set<number>>(new Set());
   const [selectedMaCols, setSelectedMaCols] = useState<string[]>(defaultMaCols);
   const [selectedHubCols, setSelectedHubCols] = useState<string[]>(defaultHubCols);
+  const defaultZeroCols = [maNameCol, maDomainCol].filter(col => col && maCols.includes(col));
+  const [selectedZeroCols, setSelectedZeroCols] = useState<string[]>(defaultZeroCols);
   const { ref, size, onResizeMouseDown } = useResizable(540, 400);
 
   const resultRef = useRef(result);
@@ -94,20 +101,32 @@ export function BatchReviewModal({
     [hubCols, customColumns],
   );
 
-  // Reset checked state when modal opens with new results
+  // Reset all state when modal opens
   useEffect(() => {
-    if (open && resultRef.current) {
-      setChecked(new Set(resultRef.current.matched.map((i) => i.maIndex)));
+    if (open) {
+      if (resultRef.current) {
+        setChecked(new Set(resultRef.current.matched.map((i) => i.maIndex)));
+      }
       setSelectedMaCols(defaultMaCols.slice());
       setSelectedHubCols(defaultHubCols.slice());
+      setSelectedZeroCols([maNameCol, maDomainCol].filter(col => col && maCols.includes(col)));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Initialise zero checkboxes when scan results arrive (all checked by default)
+  useEffect(() => {
+    if (zeroCandidateIndexes !== null && zeroCandidateIndexes !== undefined) {
+      setZeroChecked(new Set(zeroCandidateIndexes));
+    }
+  }, [zeroCandidateIndexes]);
 
   if (!open) return null;
 
   const maColsToShow = selectedMaCols.length > 0 ? selectedMaCols : defaultMaCols;
   const hubColsToShow = selectedHubCols.length > 0 ? selectedHubCols : defaultHubCols;
+  const zeroColsToShow = (selectedZeroCols.length > 0 ? selectedZeroCols : defaultZeroCols)
+    .filter(col => maCols.includes(col));
 
   const augment = (hubRow: Record<string, any>) =>
     customColumns.length > 0 ? { ...hubRow, ...applyCustomColumns(hubRow, customColumns) } : hubRow;
@@ -132,16 +151,38 @@ export function BatchReviewModal({
     });
   };
 
+  // Zero step helpers
+  const zeroCandidateList = zeroCandidateIndexes ?? [];
+  const allZeroChecked = zeroCandidateList.length > 0 && zeroCandidateList.every((i) => zeroChecked.has(i));
+  const zeroConfirmedCount = zeroChecked.size;
+  const zeroUncheckedCount = zeroCandidateList.length - zeroConfirmedCount;
+
+  const toggleAllZero = () => {
+    if (allZeroChecked) setZeroChecked(new Set());
+    else setZeroChecked(new Set(zeroCandidateList));
+  };
+
+  const toggleOneZero = (maIndex: number) => {
+    setZeroChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(maIndex)) next.delete(maIndex);
+      else next.add(maIndex);
+      return next;
+    });
+  };
+
   const handlePrimaryAction = () => {
     if (step === "exact") {
       onAction(matched.filter((i) => checked.has(i.maIndex)));
+    } else if (step === "zero") {
+      onAction(undefined, Array.from(zeroChecked));
     } else {
       onAction();
     }
   };
 
   // Summary numbers
-  const netZero = zeroCandidateCount ?? 0;
+  const netZero = confirmedZeroCount;
   const lowConfCount = lowConfidenceData.filter((c) => c.topScore < lowConfidenceThreshold).length;
   const remainingCount = Math.max(totalMaCount - confirmedExactCount - netZero - lowConfCount, 0);
 
@@ -149,7 +190,7 @@ export function BatchReviewModal({
   const stepKicker = step === "exact" ? "Batch Auto-Match" : "Batch Processing";
   const stepTitle =
     step === "exact"           ? "Auto-Match Preview" :
-    step === "zero"            ? "Zero-Candidate Skip" :
+    step === "zero"            ? "Auto Skip Records" :
     step === "low_confidence"  ? "Low-Confidence Skip" :
                                  "Batch Summary";
 
@@ -293,29 +334,86 @@ export function BatchReviewModal({
 
         {/* ── ZERO STEP ── */}
         {step === "zero" && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: "1rem" }}>
-            {zeroCandidateCount === null ? (
-              <div className="ds-card-muted" style={{ padding: "2rem", textAlign: "center" }}>
-                <span className="ds-meta ds-muted">Scanning for zero-candidate records…</span>
-              </div>
-            ) : (
-              <div className="ds-card-muted" style={{ padding: "1.5rem 1rem", display: "flex", gap: "2rem", flexWrap: "wrap", alignItems: "flex-start" }}>
-                <div>
-                  <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Records with no candidates</div>
-                  <div style={{ fontSize: "2rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
-                    {zeroCandidateCount.toLocaleString()}
-                  </div>
-                </div>
-                <div style={{ flex: 1, minWidth: 220 }}>
-                  <p className="ds-meta ds-muted" style={{ margin: 0 }}>
-                    {zeroCandidateCount === 0
-                      ? "All records have at least one candidate — nothing will be auto-skipped."
-                      : "These records returned no candidates from the matching index and will be automatically marked as No Match in the results table."}
-                  </p>
+          <>
+            <div className="ds-card-muted" style={{ display: "flex", gap: "2rem", flexWrap: "wrap", padding: "0.75rem 1rem", flexShrink: 0 }}>
+              <div>
+                <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Records to auto-skip</div>
+                <div style={{ fontSize: "1.5rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
+                  {zeroCandidateIndexes === null
+                    ? <span style={{ fontSize: "1rem", opacity: 0.6 }}>Scanning…</span>
+                    : zeroCandidateList.length.toLocaleString()}
                 </div>
               </div>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <p className="ds-meta ds-muted" style={{ margin: 0 }}>
+                  {zeroCandidateIndexes === null
+                    ? "Scanning records for zero candidates and zero HubSpot word results…"
+                    : zeroCandidateList.length === 0
+                      ? "All records returned at least one candidate or a HubSpot word hit — nothing will be auto-skipped."
+                      : "These records returned zero candidates and zero HubSpot Search results for every meaningful word in their company name. Uncheck any you want to send to manual review instead."}
+                </p>
+              </div>
+            </div>
+
+            {zeroCandidateIndexes !== null && zeroCandidateList.length > 0 && (
+              <>
+                <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap", position: "relative", zIndex: 50, flexShrink: 0 }}>
+                  <FieldSelectorDropdown label="M&A Columns" allFields={maCols} selected={selectedZeroCols} onChange={setSelectedZeroCols} />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+                  <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", cursor: "pointer" }}>
+                    <input type="checkbox" checked={allZeroChecked} onChange={toggleAllZero} />
+                    <span className="ds-meta">{allZeroChecked ? "Deselect All" : "Select All"}</span>
+                  </label>
+                  <span className="ds-meta ds-muted">
+                    {zeroConfirmedCount.toLocaleString()} / {zeroCandidateList.length.toLocaleString()} selected
+                  </span>
+                </div>
+
+                <div className="ds-table-wrap" style={{ flex: 1, minHeight: 120, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...thStyle, width: 36, textAlign: "center" }}></th>
+                        {zeroColsToShow.map((col) => (
+                          <th key={col} style={thStyle}>
+                            <span className="ds-pill" style={{ fontSize: "0.6rem", marginRight: "0.3rem", padding: "0.1rem 0.3rem" }}>M&A</span>
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {zeroCandidateList.map((maIndex) => {
+                        const row = maRows[maIndex];
+                        const isChecked = zeroChecked.has(maIndex);
+                        return (
+                          <tr
+                            key={maIndex}
+                            style={{ cursor: "pointer", background: isChecked ? "var(--background)" : "var(--muted)", opacity: isChecked ? 1 : 0.45 }}
+                            onClick={() => toggleOneZero(maIndex)}
+                          >
+                            <td style={{ ...tdStyle, textAlign: "center" }}>
+                              <input type="checkbox" checked={isChecked} onChange={() => toggleOneZero(maIndex)} onClick={(e) => e.stopPropagation()} />
+                            </td>
+                            {zeroColsToShow.map((col) => (
+                              <td key={col} style={tdStyle} title={String(row?.[col] ?? "")}>{String(row?.[col] ?? "—")}</td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="ds-meta ds-muted" style={{ flexShrink: 0 }}>
+                  <strong>{zeroConfirmedCount.toLocaleString()}</strong> will be auto-skipped
+                  {zeroUncheckedCount > 0 && <> · <strong>{zeroUncheckedCount.toLocaleString()}</strong> unchecked → manual review</>}
+                </div>
+              </>
             )}
-          </div>
+          </>
         )}
 
         {/* ── LOW CONFIDENCE STEP ── */}
@@ -399,7 +497,7 @@ export function BatchReviewModal({
                 </div>
               </div>
               <div>
-                <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Auto No Match (zero candidates)</div>
+                <div className="ds-kicker" style={{ marginBottom: "0.2rem" }}>Auto No Match (auto-skipped)</div>
                 <div style={{ fontSize: "1.8rem", fontFamily: "var(--font-mono)", fontWeight: 700 }}>
                   {netZero.toLocaleString()}
                 </div>
@@ -438,7 +536,7 @@ export function BatchReviewModal({
               variant="primary"
               onClick={handlePrimaryAction}
               disabled={
-                (step === "zero" && zeroCandidateCount === null) ||
+                (step === "zero" && zeroCandidateIndexes === null) ||
                 (step === "low_confidence" && lowConfidenceData.length === 0)
               }
             >

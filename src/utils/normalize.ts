@@ -120,12 +120,25 @@ export function acronymPunctKey(name: string): string {
  * - try and/& swap, The prefix strip, trailing-s strip
  * Note: display uses original HubSpot name regardless.
  */
-export function generateSuffixVariants(name: any): { variant: string; foundBy: "exact_core" | "suffix_variant_removed" | "suffix_variant_added" | "and_ampersand_variant" | "the_prefix_variant" | "trailing_s_variant" }[] {
+export function generateSuffixVariants(name: any): { variant: string; foundBy: "exact_core" | "suffix_variant_removed" | "suffix_variant_added" | "and_ampersand_variant" | "the_prefix_variant" | "trailing_s_variant" | "camelcase_split" }[] {
   const raw = normalizeNameRaw(name);
   const core = removeSuffixTokens(raw);
 
   const out: { variant: string; foundBy: any }[] = [];
   out.push({ variant: raw, foundBy: "exact_core" });
+
+  // CamelCase split: "KentuckianaWorks" → "kentuckiana works"
+  // splitCamelCase works on original-case tokens so we operate before normalizing.
+  const originalTokens = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+  const camelExpanded = originalTokens.flatMap(t => splitCamelCase(t)).join(" ");
+  const camelRaw = normalizeNameRaw(camelExpanded);
+  if (camelRaw && camelRaw !== raw) {
+    out.push({ variant: camelRaw, foundBy: "camelcase_split" });
+    const camelCore = removeSuffixTokens(camelRaw);
+    if (camelCore && camelCore !== camelRaw) {
+      out.push({ variant: camelCore, foundBy: "camelcase_split" });
+    }
+  }
 
   if (core && core !== raw) out.push({ variant: core, foundBy: "suffix_variant_removed" });
 
@@ -185,6 +198,84 @@ export function extractDbaVariants(name: any): string[] {
 }
 
 const LEADING_SKIP = new Set(["the", "a", "an"]);
+
+// ---------------------------------------------------------------------------
+// Words excluded when searching HubSpot per-word in the zero-candidate check.
+// All entries must be lowercase. Add freely — one word per line is easiest.
+// ---------------------------------------------------------------------------
+export const ZERO_CANDIDATE_WORD_EXCLUSIONS = new Set([
+  // articles & prepositions
+  "the", "a", "an", "of", "and", "for",
+  // corporate entity types
+  "inc", "incorporated", "llc", "corp", "corporation",
+  "ltd", "limited", "co", "company",
+  "lp", "plc", "llp", "pllc", "pc", "pa",
+  // generic business descriptors
+  "group", "holdings", "holding",
+  "partners", "partner",
+  "associates", "associate",
+  "organization", "org",
+  // add more below ↓
+]);
+
+/**
+ * Splits a PascalCase/camelCase token into its component words.
+ * "KentuckianaWorks" → ["Kentuckiana", "Works"]
+ * "NeoHealth"        → ["Neo", "Health"]
+ * "ABCCompany"       → ["ABC", "Company"]
+ * All-lowercase strings are returned as-is (no dictionary available).
+ */
+export function splitCamelCase(token: string): string[] {
+  return token
+    .replace(/([a-z])([A-Z])/g, "$1 $2")        // camelCase boundary: "worksFor" → "works For"
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")  // acronym+word: "ABCCompany" → "ABC Company"
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Splits a company name into meaningful words for HubSpot per-word search.
+ * - Special characters (dash, slash, apostrophe, etc.) are treated as word
+ *   separators, so "Doctor-Med" → ["doctor", "med"].
+ * - CamelCase tokens are split before lowercasing, so "KentuckianaWorks" →
+ *   ["kentuckiana", "works"] — plus the full token "kentuckianaworks" as a
+ *   fallback in case the split was a false positive.
+ * - Words shorter than 3 characters and words in ZERO_CANDIDATE_WORD_EXCLUSIONS
+ *   are dropped.
+ */
+export function getMeaningfulSearchWords(name: string): string[] {
+  const result = new Set<string>();
+
+  // Split on whitespace and common special chars BEFORE lowercasing so
+  // camelCase detection still works on each token.
+  const rawTokens = String(name ?? "")
+    .trim()
+    .split(/[\s\-\/&+.,;:()''"!?]+/)
+    .filter(Boolean);
+
+  for (const token of rawTokens) {
+    const camelParts = splitCamelCase(token);
+
+    for (const part of camelParts) {
+      const clean = part.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (clean.length >= 3 && !ZERO_CANDIDATE_WORD_EXCLUSIONS.has(clean)) {
+        result.add(clean);
+      }
+    }
+
+    // If the token was split into multiple parts, also keep the full token as a
+    // fallback (covers all-lowercase concatenations where no split occurred but
+    // the original unsplit form might exist in HubSpot).
+    if (camelParts.length > 1) {
+      const full = token.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (full.length >= 3 && !ZERO_CANDIDATE_WORD_EXCLUSIONS.has(full)) {
+        result.add(full);
+      }
+    }
+  }
+
+  return Array.from(result);
+}
 
 /** Returns the first meaningful word of a company name, skipping leading articles like "The". */
 export function getFirstMeaningfulWord(name: string): string {

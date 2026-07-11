@@ -7,6 +7,7 @@ import {
   generateSuffixVariants,
   extractDbaVariants,
   getFirstMeaningfulWord,
+  getMeaningfulSearchWords,
   diceSimilarity,
   looksLikeAcronym,
   acronymPunctKey,
@@ -392,7 +393,16 @@ self.onmessage = (e: MessageEvent<WorkerMsg>) => {
       const zeroIndexes: number[] = [];
       for (let i = 0; i < MA.length; i++) {
         const row = MA[i];
-        if (row && !hasAnyCandidates(row)) zeroIndexes.push(i);
+        if (!row) continue;
+        // Gate 1: matching pipeline must find zero candidates
+        if (hasAnyCandidates(row)) continue;
+        // Gate 2: every meaningful word from the company name must also return
+        // zero results in HubSpot search. If any word hits, don't skip.
+        const words = getMeaningfulSearchWords(String(row[mapping?.maName ?? ""] ?? ""));
+        const anyWordHasResults = words.some(word =>
+          HUB_SEARCH_INDEX.some(r => r.values.some(v => v.includes(word)))
+        );
+        if (!anyWordHasResults) zeroIndexes.push(i);
       }
       (self as any).postMessage({ type: "ZERO_CANDIDATES_DONE", zeroIndexes } satisfies WorkerOut);
       return;
