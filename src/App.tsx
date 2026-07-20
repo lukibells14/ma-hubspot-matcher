@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { RowObject, ColumnMapping, DisplayFieldSelection, CandidateDisplay, SelectionRow, BatchMatchItem, BatchMatchResult, CustomColumn } from "./types";
 
 import { parseCsvFile } from "./utils/csv";
-import { loadHubspotCache, saveHubspotCache, clearHubspotCache } from "./utils/storage";
 import { exportSelectionsToXlsx, exportRemainingToCsv } from "./utils/export";
 import { applyCustomColumns } from "./utils/customColumns";
 import { runBatchMatch, previewZeroCandidateCount } from "./utils/batchMatch";
@@ -39,7 +38,6 @@ export default function App() {
   const [maCols, setMaCols] = useState<string[]>([]);
   const [hubRows, setHubRows] = useState<RowObject[]>([]);
   const [hubCols, setHubCols] = useState<string[]>([]);
-  const [hubCacheInfo, setHubCacheInfo] = useState<string>("");
 
   const [mapping, setMapping] = useState<ColumnMapping>({ maName: "", hubName: "" });
   const [fields, setFields] = useState<DisplayFieldSelection>({ maFields: [], hubFields: [], showHubFoundBy: true });
@@ -207,15 +205,6 @@ export default function App() {
       setStatus(`Manual review: ${(currentQueuePos + 1).toLocaleString()}/${matchingQueue.length.toLocaleString()}${autoNote}`);
     }
   }, [currentQueuePos, matchingQueue.length, stage, batchAutoCount]);
-
-  useEffect(() => {
-    (async () => {
-      const cache = await loadHubspotCache();
-      if (cache?.rows?.length) {
-        setHubCacheInfo(`Cached HubSpot: ${cache.rows.length.toLocaleString()} rows (saved ${new Date(cache.savedAt).toLocaleString()})`);
-      }
-    })();
-  }, []);
 
   const canStart = useMemo(() => {
     return maRows.length > 0 && hubRows.length > 0 && mapping.maName && mapping.hubName;
@@ -646,54 +635,8 @@ export default function App() {
             setStatus(`HubSpot loaded: ${parsed.rows.length.toLocaleString()} rows`);
             setStage(maRows.length ? "ready" : "upload");
           }}
-          right={
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <Button
-                onClick={async () => {
-                  setHubFilename("HubSpot (cached)");
-                  const cache = await loadHubspotCache();
-                  if (!cache?.rows?.length) return setStatus("No cached HubSpot dataset found.");
-                  setHubRows(cache.rows);
-                  setHubCols(cache.columns);
-                  setHubCacheInfo(`Cached HubSpot: ${cache.rows.length.toLocaleString()} rows (saved ${new Date(cache.savedAt).toLocaleString()})`);
-                  setStatus(`Loaded cached HubSpot: ${cache.rows.length.toLocaleString()} rows`);
-                  setStage(maRows.length ? "ready" : "upload");
-                }}
-              >
-                Use Cached
-              </Button>
-
-              <Button
-                onClick={async () => {
-                  if (!hubRows.length) return setStatus("Upload HubSpot first, then Save Cache.");
-                  await saveHubspotCache({ savedAt: Date.now(), columns: hubCols, rows: hubRows });
-                  setHubCacheInfo(`Cached HubSpot: ${hubRows.length.toLocaleString()} rows (saved ${new Date().toLocaleString()})`);
-                  setStatus("Saved HubSpot dataset to cache (IndexedDB).");
-                }}
-              >
-                Save Cache
-              </Button>
-
-              <Button
-                onClick={async () => {
-                  setHubFilename("");
-                  await clearHubspotCache();
-                  setHubCacheInfo("");
-                  setStatus("Cleared HubSpot cache.");
-                }}
-              >
-                Clear Cache
-              </Button>
-            </div>
-          }
         />
       </section>
-
-      {hubCacheInfo && (
-        <div className="ds-card-muted" style={{ marginTop: "1rem" }}>
-          <span className="ds-meta">{hubCacheInfo}</span>
-        </div>
-      )}
 
       {(maRows.length > 0 && hubRows.length > 0) && (
         <>
