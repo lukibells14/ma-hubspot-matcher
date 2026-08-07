@@ -10,7 +10,7 @@ A TypeScript/React single-page application for high-volume company name matching
 
 ```
 Upload M&A CSV
-    → Upload HubSpot CSV (or load from cache)
+    → Upload HubSpot CSV
         → Configure column mappings
             → (Optional) Build custom computed columns
                 → (Optional) Enable batch auto-match → review preview dialog
@@ -31,7 +31,7 @@ src/
 │   └── useResizable.ts            # Shared drag-to-resize hook for all modals
 ├── utils/
 │   ├── csv.ts                     # CSV parsing (PapaParse, auto-delimiter)
-│   ├── storage.ts                 # IndexedDB caching for HubSpot (idb-keyval)
+│   ├── storage.ts                 # IndexedDB helpers (cache feature removed; file retained)
 │   ├── normalize.ts               # String normalization + matching algorithms + ZERO_CANDIDATE_WORD_EXCLUSIONS
 │   ├── export.ts                  # XLSX/CSV export (xlsx library)
 │   ├── batchMatch.ts              # Exact-name batch matching logic
@@ -63,18 +63,13 @@ src/
 - Filters empty rows, returns typed `RowObject[]`
 - File: `src/utils/csv.ts`
 
-### 2. HubSpot Dataset Caching
-- Stores the HubSpot CSV in **IndexedDB** (survives page reloads)
-- UI actions: **Use Cached**, **Save Cache**, **Clear Cache**
-- Lets users upload HubSpot once and reuse it across multiple M&A sessions
-- File: `src/utils/storage.ts`
-
-### 3. Column Mapping
+### 2. Column Mapping
 - User selects which column = company name, domain, unique code for both CSVs
-- Auto-guesses columns with regex patterns (`/company.*name/i`, `/domain|website/i`)
+- Auto-guesses columns with regex patterns (`/company.*name|organization|name/i`, `/domain|website/i`)
+- **Stale column guard**: when a new file is uploaded, if the previously mapped column no longer exists in the new file's columns, the mapping resets to the new auto-guess rather than keeping the stale value (which caused blank display in the left panel)
 - File: `src/components/ColumnMapper.tsx`
 
-### 4. Intelligent Multi-Strategy Matching (Web Worker)
+### 3. Intelligent Multi-Strategy Matching (Web Worker)
 Runs in a background thread to avoid blocking the UI. Uses multiple matching strategies, in priority order:
 
 | Strategy | Description |
@@ -98,7 +93,7 @@ Builds 6 lookup indexes at startup: domain, core name, acronym, token, acronym+p
 
 Files: `src/workers/match.worker.ts`, `src/utils/normalize.ts`
 
-### 5. Batch Options (Optional)
+### 4. Batch Options (Optional)
 Three optional pre-steps before manual review, enabled via the **Batch Options** section on the ready screen. Any combination can be enabled — steps open in sequence: exact → zero → low_confidence → summary (summary only appears when 2+ options are active).
 
 **Auto-match exact names (`batch_exact`)**
@@ -130,14 +125,14 @@ All three options update the progress bar, results table, and manual review queu
 
 Files: `src/utils/batchMatch.ts`, `src/components/BatchReviewModal.tsx`
 
-### 6. Prescreen Queue
+### 5. Prescreen Queue
 Before review starts, rows are bucketed:
 - **100% matches** (domain or core name exact) — reviewed first
 - **High-score** (suffix/acronym-punct variant hits) — reviewed second
 - **Rest** — sorted descending by top candidate score, reviewed last
 - Rows already confirmed by batch auto-match are excluded from the queue
 
-### 6a. Loading Overlays
+### 5a. Loading Overlays
 A full-screen `LoadingOverlay` (white, blurred backdrop, 2px black card) blocks all interaction during async operations. Four phases:
 
 | Phase | Trigger | UI |
@@ -151,7 +146,7 @@ Keyboard shortcuts (arrow keys) are also blocked while any overlay is active via
 
 File: `src/components/LoadingOverlay.tsx`
 
-### 7. Keyboard-First Review UI
+### 6. Keyboard-First Review UI
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Navigate candidates |
@@ -163,12 +158,12 @@ Also shows: match score, which strategy found the match (`foundBy`), and a previ
 
 File: `src/components/MatchViewer.tsx`
 
-### 8. Display Field Customization
+### 7. Display Field Customization
 User selects which M&A and HubSpot fields to display during review. Custom column names are included in the HubSpot field dropdown. Includes a toggle for showing the `Found By` reason under each company name.
 
 File: `src/components/FieldSelectorDropdown.tsx`
 
-### 9. Custom Column Builder
+### 8. Custom Column Builder
 Always-visible panel (shown as soon as HubSpot is loaded, across all stages). Lets users define computed columns from HubSpot data using IF/ELSE rules.
 
 - **Rules**: multiple rules per column (first match wins / ELSE IF)
@@ -181,19 +176,19 @@ Always-visible panel (shown as soon as HubSpot is loaded, across all stages). Le
 
 Files: `src/utils/customColumns.ts`, `src/components/CustomColumnBuilder.tsx`
 
-### 10. Live Results Table
+### 9. Live Results Table
 Shows all made selections in real-time as the user reviews. Columns: Status | Score | M&A Summary | HubSpot Summary (including custom column values).
 
 File: `src/components/ResultsTable.tsx`
 
-### 11. Export
+### 10. Export
 - **Excel (XLSX)**: One row per selection, columns prefixed `ma.*` / `hub.*`, plus `match_status`, `match_score`, `found_by`, and any custom columns
 - **Remaining CSV**: Unreviewed M&A rows (only exported if the session is not yet complete)
 - **ExportModal**: User provides custom filenames before downloading
 
 Files: `src/utils/export.ts`, `src/components/ExportModal.tsx`
 
-### 12. Candidate Search Mode Toggle (Sticky)
+### 11. Candidate Search Mode Toggle (Sticky)
 The MatchViewer has two modes toggled by a button pair:
 - **CANDIDATES** — shows pre-scored candidates from the worker pipeline
 - **HUBSPOT SEARCH** — full-text search across the entire HubSpot dataset by company name (debounced 150ms)
@@ -209,21 +204,47 @@ The mode is **sticky**: when a selection is made, the mode used is remembered vi
 
 File: `src/components/MatchViewer.tsx`
 
-### 13. Matching Info Dialog
+### 12. Matching Info Dialog
 A **"? HOW MATCHING WORKS"** button in the top-right of the hero header opens a scrollable reference dialog listing all 14 matching strategies, each with a description and 2–3 examples (M&A Name / HubSpot Candidate / Why It Matched).
 
 File: `src/components/MatchingInfoModal.tsx`
 
-### 14. File Preview Modal
+### 13. File Preview Modal
 Shows column list, row count, and first 5 rows when a CSV is uploaded, so users can verify the file before proceeding.
 
 File: `src/components/SummaryModal.tsx`
 
-### 15. Resizable Modals
+### 14. Resizable Modals
 All modals (ExportModal, SummaryModal, BatchReviewModal, CustomColumnBuilder) have a drag handle at the bottom-right corner. Uses the shared `useResizable` hook.
 
 - Dragging outside the modal after resize does **not** trigger cancel — suppressed via a one-time capture-phase click listener
 - Hook: `src/hooks/useResizable.ts`
+
+### 15. E2E Test Suite (Playwright)
+Full end-to-end test suite using Playwright v1.62 on Chromium. 59 tests across 7 spec files, all passing headless.
+
+```
+e2e/
+├── helpers.ts                   # Shared: uploadBothFiles, waitForReady, startMatchingAndWait
+├── fixtures/
+│   ├── ma-sample.csv            # 5 MA records (Company Name, Domain Name)
+│   ├── hub-sample.csv           # 5 HubSpot records (Company name, Company Domain Name, Record ID, Industry)
+│   └── org-sample.csv           # 5 MA records using non-standard "Organization" column name
+├── 01-column-mapping.spec.ts    # Auto-guess, manual remap, file names, Start Matching gating
+├── 02-custom-columns.spec.ts    # Builder open/close, add column, name input, rule output, footer count
+├── 03-batch-options.spec.ts     # Checkbox states, dialogs, low-confidence threshold input
+├── 04-matching-review.spec.ts   # Progress bar, Go Back, re-select after go-back, No Match, results table
+├── 05-export.spec.ts            # Excel download, remaining CSV, modal open/close, finished state
+├── 06-reupload.spec.ts          # Re-upload during/after matching, remaining CSV round-trip flow
+└── 07-org-column.spec.ts        # Non-standard "Organization" column auto-guess + stale column re-upload
+```
+
+Key design notes:
+- `startMatchingAndWait` waits for **both** the M&A COMPANY panel to appear AND the loading overlay (indexing + prescreen) to fully clear. The app sets `stage = "matching"` at the same time as it shows the overlay, so without the extra wait, keyboard events sent immediately after would be silently ignored by the app's `loadingOverlayRef` guard.
+- Progress assertions use the full `"X / Y (Z%)"` format (e.g. `/1 \/ 5 \(20%\)/`) because `ProgressHeader` renders the percentage inline; the simpler `"1 / 5"` exact match was only matching the `LoadingOverlay`'s progress counter (no percentage) and broke after the overlay cleared.
+- Low-confidence threshold test scopes to `input[type="number"][min="0"]` to distinguish the threshold input from the Max Candidates input (both are number inputs, visible simultaneously).
+
+Run commands: see **Dev Commands** section below.
 
 ---
 
@@ -305,17 +326,21 @@ Key derived state:
 | Vite | 7 | Build tool + dev server |
 | PapaParse | 5.5 | CSV parsing |
 | xlsx | 0.18 | Excel export |
-| idb-keyval | 6.2 | IndexedDB wrapper |
+| idb-keyval | 6.2 | IndexedDB wrapper (cache feature removed; dependency retained) |
+| Playwright | 1.62 | E2E testing |
 
 ---
 
 ## Dev Commands
 
 ```bash
-npm run dev      # Start dev server (localhost:5173)
-npm run build    # Type-check + bundle to dist/
-npm run preview  # Serve dist/ locally
-npm run lint     # ESLint
+npm run dev           # Start dev server (localhost:5173)
+npm run build         # Type-check + bundle to dist/
+npm run preview       # Serve dist/ locally
+npm run lint          # ESLint
+npm run test:e2e      # Run Playwright E2E suite (headless, auto-starts dev server)
+npm run test:e2e:ui   # Playwright UI mode (interactive test explorer)
+npm run test:e2e:headed  # Run tests in headed (visible browser) mode
 ```
 
 ---
