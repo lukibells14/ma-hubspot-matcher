@@ -589,11 +589,19 @@ export default function App() {
             setMaRows(parsed.rows);
             setMaCols(parsed.columns);
 
-            const nameGuess = parsed.columns.find((c) => /company.*name|name/i.test(c)) ?? parsed.columns[0] ?? "";
+            const nameGuess = parsed.columns.find((c) => /company.*name|organization|name/i.test(c)) ?? parsed.columns[0] ?? "";
             const domainGuess = parsed.columns.find((c) => /domain|website/i.test(c));
 
-            setMapping((m) => ({ ...m, maName: m.maName || nameGuess, maDomain: m.maDomain ?? domainGuess }));
-            setFields((f) => ({ ...f, maFields: f.maFields.length ? f.maFields : [nameGuess, ...(domainGuess ? [domainGuess] : [])] }));
+            // If the previously mapped column no longer exists in the new file, reset to the new guess.
+            setMapping((m) => ({
+              ...m,
+              maName: m.maName && parsed.columns.includes(m.maName) ? m.maName : nameGuess,
+              maDomain: m.maDomain && parsed.columns.includes(m.maDomain) ? m.maDomain : domainGuess,
+            }));
+            setFields((f) => {
+              const valid = f.maFields.filter((col) => parsed.columns.includes(col));
+              return { ...f, maFields: valid.length ? valid : [nameGuess, ...(domainGuess ? [domainGuess] : [])] };
+            });
 
             openSummary("M&A file summary", parsed.rows, parsed.columns);
             setStatus(`M&A loaded: ${parsed.rows.length.toLocaleString()} rows`);
@@ -615,21 +623,25 @@ export default function App() {
             setHubRows(parsed.rows);
             setHubCols(parsed.columns);
 
-            const nameGuess = parsed.columns.find((c) => /company.*name|name/i.test(c)) ?? parsed.columns[0] ?? "";
+            const nameGuess = parsed.columns.find((c) => /company.*name|organization|name/i.test(c)) ?? parsed.columns[0] ?? "";
             const domainGuess = parsed.columns.find((c) => /domain|website/i.test(c));
             const idGuess = parsed.columns.find((c) => /unique|code|id/i.test(c));
 
+            // If the previously mapped column no longer exists in the new file, reset to the new guess.
             setMapping((m) => ({
               ...m,
-              hubName: m.hubName || nameGuess,
-              hubDomain: m.hubDomain ?? domainGuess,
-              hubUniqueCode: m.hubUniqueCode ?? idGuess,
+              hubName: m.hubName && parsed.columns.includes(m.hubName) ? m.hubName : nameGuess,
+              hubDomain: m.hubDomain && parsed.columns.includes(m.hubDomain) ? m.hubDomain : domainGuess,
+              hubUniqueCode: m.hubUniqueCode && parsed.columns.includes(m.hubUniqueCode) ? m.hubUniqueCode : idGuess,
             }));
 
-            setFields((f) => ({
-              ...f,
-              hubFields: f.hubFields.length ? f.hubFields : [nameGuess, ...(domainGuess ? [domainGuess] : []), ...(idGuess ? [idGuess] : [])],
-            }));
+            setFields((f) => {
+              const valid = f.hubFields.filter((col) => parsed.columns.includes(col));
+              return {
+                ...f,
+                hubFields: valid.length ? valid : [nameGuess, ...(domainGuess ? [domainGuess] : []), ...(idGuess ? [idGuess] : [])],
+              };
+            });
 
             openSummary("HubSpot file summary", parsed.rows, parsed.columns);
             setStatus(`HubSpot loaded: ${parsed.rows.length.toLocaleString()} rows`);
